@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 
 // Each entry is (version_number, sql). Migrations run in order and are skipped
 // if already recorded in schema_migrations. Each migration is atomic.
-const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_001)];
+const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_001), (2, MIGRATION_002)];
 
 const MIGRATION_001: &str = "
     CREATE TABLE accounts (
@@ -47,6 +47,16 @@ const MIGRATION_001: &str = "
         transaction_id TEXT NOT NULL REFERENCES transactions(id),
         account_id     TEXT NOT NULL REFERENCES accounts(id),
         amount_cents   INTEGER NOT NULL
+    );
+";
+
+const MIGRATION_002: &str = "
+    CREATE TABLE valuation_snapshots (
+        id           TEXT    NOT NULL PRIMARY KEY,
+        account_id   TEXT    NOT NULL REFERENCES accounts(id),
+        date         TEXT    NOT NULL,
+        amount_cents INTEGER NOT NULL,
+        currency     TEXT    NOT NULL
     );
 ";
 
@@ -96,6 +106,23 @@ mod tests {
         assert!(tables.contains(&"postings".to_string()));
         assert!(tables.contains(&"raw_records".to_string()));
         assert!(tables.contains(&"transactions".to_string()));
+    }
+
+    #[test]
+    fn migration_002_creates_valuation_snapshots() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='valuation_snapshots'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+
+        assert!(exists);
     }
 
     #[test]

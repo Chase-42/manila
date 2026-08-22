@@ -50,3 +50,13 @@ pub struct Posting {
     pub account_id: String,
     pub amount_cents: i64,
 }
+
+/// Schema-ready, MVP unused. Holds manual investment account balance snapshots.
+#[derive(Debug, Clone)]
+pub struct ValuationSnapshot {
+    pub id: String,
+    pub account_id: String,
+    pub date: String,
+    pub amount_cents: i64,
+    pub currency: String,
+}

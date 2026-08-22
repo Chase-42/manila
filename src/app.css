@@ -1,0 +1,140 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+/* Self-hosted fonts - never CDN (Tauri CSP blocks external origins) */
+@import '@fontsource/tektur/400.css';
+@import '@fontsource/tektur/500.css';
+@import '@fontsource/tektur/600.css';
+@import '@fontsource/tektur/700.css';
+@import '@fontsource/kode-mono/400.css';
+@import '@fontsource/kode-mono/500.css';
+@import '@fontsource/kode-mono/700.css';
+
+/*
+  Burning Acid theme - ported from prototypes/theme.css.
+  @theme maps tokens into Tailwind's utility class system.
+  Raw custom properties are also kept on :root for plain CSS usage in layouts.
+*/
+@theme {
+  /* Surfaces */
+  --color-bg:             #0b0914;
+  --color-surface:        #110e1c;
+  --color-surface-raised: #18142a;
+  --color-surface-hover:  #1e1932;
+
+  /* Borders */
+  --color-border:         #271f3d;
+  --color-border-subtle:  #1b1530;
+
+  /* Text */
+  --color-text:           #ece6ff;
+  --color-muted:          #7b6fa8;
+  --color-faint:          #3b3060;
+
+  /* Accent - acid green */
+  --color-accent:         #b5ff3c;
+  --color-accent-ink:     #0b0914;
+  --color-accent-dim:     #4a6614;
+
+  /* Secondary - magenta */
+  --color-secondary:      #e040fb;
+  --color-secondary-dim:  #5c1a63;
+
+  /* Semantic */
+  --color-destructive:    #ff4080;
+  --color-positive:       #3bf5a0;
+
+  /* Typography */
+  --font-display: 'Tektur', system-ui, sans-serif;
+  --font-mono:    'Kode Mono', ui-monospace, monospace;
+
+  /* Geometry - all radius utilities resolve to 0 (no rounded corners per design) */
+  --radius:    0rem;
+  --radius-xs: 0rem;
+  --radius-sm: 0rem;
+  --radius-md: 0rem;
+  --radius-lg: 0rem;
+  --radius-xl: 0rem;
+  --radius-2xl: 0rem;
+  --radius-3xl: 0rem;
+}
+
+/* shadcn-svelte expects these CSS variable names on :root */
+:root {
+  --background:       #0b0914;
+  --foreground:       #ece6ff;
+  --card:             #110e1c;
+  --card-foreground:  #ece6ff;
+  --popover:          #18142a;
+  --popover-foreground: #ece6ff;
+  --primary:          #b5ff3c;
+  --primary-foreground: #0b0914;
+  --secondary:        #18142a;
+  --secondary-foreground: #ece6ff;
+  --muted:            #18142a;
+  --muted-foreground: #7b6fa8;
+  --accent:           #b5ff3c;
+  --accent-foreground: #0b0914;
+  --destructive:      #ff4080;
+  --destructive-foreground: #ece6ff;
+  --border:           #271f3d;
+  --input:            #271f3d;
+  --ring:             #b5ff3c;
+  --radius:           0rem;
+
+  /* Burning Acid raw tokens (for direct var() use in layout CSS) */
+  --bg:             #0b0914;
+  --surface:        #110e1c;
+  --surface-raised: #18142a;
+  --surface-hover:  #1e1932;
+  --border-subtle:  #1b1530;
+  --text:           #ece6ff;
+  --faint:          #3b3060;
+  --accent-ink:     #0b0914;
+  --accent-dim:     #4a6614;
+  --secondary-raw:  #e040fb;
+  --secondary-dim:  #5c1a63;
+  --positive:       #3bf5a0;
+}
+
+/* Dark mode - shadcn-svelte checks for .dark class on <html> */
+.dark {
+  --background:       #0b0914;
+  --foreground:       #ece6ff;
+  --card:             #110e1c;
+  --card-foreground:  #ece6ff;
+  --popover:          #18142a;
+  --popover-foreground: #ece6ff;
+  --primary:          #b5ff3c;
+  --primary-foreground: #0b0914;
+  --secondary:        #18142a;
+  --secondary-foreground: #ece6ff;
+  --muted:            #18142a;
+  --muted-foreground: #7b6fa8;
+  --accent:           #b5ff3c;
+  --accent-foreground: #0b0914;
+  --destructive:      #ff4080;
+  --destructive-foreground: #ece6ff;
+  --border:           #271f3d;
+  --input:            #271f3d;
+  --ring:             #b5ff3c;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-display);
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
+  margin: 0;
+  padding: 0;
+}

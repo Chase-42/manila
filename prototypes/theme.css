@@ -1,0 +1,49 @@
+/*
+  manila - Burning Acid theme
+  Durable output of /prototype. Port this block into the real app's
+  app.css @theme when the first UI feature is built.
+
+  Fonts: TODO - self-host via @fontsource in the real app (CSP blocks CDN).
+  The mockups load from Google Fonts; swap the import for @fontsource paths:
+    @fontsource/tektur and @fontsource/kode-mono
+*/
+
+/* Google Fonts placeholder - replace with self-hosted @fontsource in real app */
+@import url('https://fonts.googleapis.com/css2?family=Tektur:wght@400;500;600;700&family=Kode+Mono:wght@400;500;700&display=swap');
+
+:root {
+  /* surfaces */
+  --bg:             #0b0914;  /* page background */
+  --surface:        #110e1c;  /* cards, table rows, inputs */
+  --surface-raised: #18142a;  /* sidebar, header bar, popovers */
+  --surface-hover:  #1e1932;  /* row hover - no glow on data surfaces */
+
+  /* borders */
+  --border:        #271f3d;
+  --border-subtle: #1b1530;
+
+  /* text */
+  --text:   #ece6ff;  /* primary */
+  --muted:  #7b6fa8;  /* labels, secondary info */
+  --faint:  #3b3060;  /* hints, placeholder, uncategorized */
+
+  /* accent - acid green: primary action, focus, key readouts */
+  --accent:     #b5ff3c;
+  --accent-ink: #0b0914;  /* text rendered on accent background */
+  --accent-dim: #4a6614;  /* subtle accent fills, inactive bars */
+
+  /* secondary - magenta */
+  --secondary:     #e040fb;
+  --secondary-dim: #5c1a63;
+
+  /* semantic */
+  --destructive: #ff4080;  /* overspent categories, errors */
+  --positive:    #3bf5a0;  /* income, inflows */
+
+  /* typography */
+  --font-display: 'Tektur', system-ui, sans-serif;
+  --font-mono:    'Kode Mono', ui-monospace, monospace;
+
+  /* geometry */
+  --radius: 0rem;
+}

@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>manila - transactions</title>
+  <link rel="stylesheet" href="theme.css">
+  <style>
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      border-radius: var(--radius);
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font-display);
+      font-size: 13px;
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+    }
+
+    /* ── Sidebar (shared shell) ── */
+    .sidebar {
+      width: 220px;
+      min-width: 220px;
+      background: var(--surface-raised);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      box-shadow: 4px 0 24px 0 color-mix(in srgb, var(--accent) 8%, transparent);
+    }
+
+    .wordmark {
+      padding: 20px 20px 16px;
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--accent);
+      letter-spacing: 0.06em;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav {
+      display: flex;
+      flex-direction: column;
+      padding: 12px 0;
+      flex: 1;
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 20px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      letter-spacing: 0.02em;
+      border-left: 2px solid transparent;
+    }
+
+    .nav-item:hover {
+      color: var(--text);
+      background: var(--surface-hover);
+    }
+
+    .nav-item.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+      background: color-mix(in srgb, var(--accent) 6%, transparent);
+    }
+
+    .nav-icon {
+      width: 14px;
+      height: 14px;
+      opacity: 0.7;
+    }
+
+    .sidebar-footer {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+    }
+
+    .month-badge {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--faint);
+      letter-spacing: 0.04em;
+    }
+
+    /* ── Main ── */
+    .main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Filter bar ── */
+    .filter-bar {
+      background: var(--surface-raised);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .filter-select {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-display);
+      font-size: 12px;
+      padding: 6px 10px;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%237b6fa8'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 8px center;
+      padding-right: 24px;
+    }
+
+    .filter-select:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .search-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: var(--font-display);
+      font-size: 12px;
+      padding: 6px 10px;
+    }
+
+    .search-input::placeholder {
+      color: var(--faint);
+    }
+
+    .search-input:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    .filter-divider {
+      width: 1px;
+      height: 20px;
+      background: var(--border);
+    }
+
+    /* ── Table area ── */
+    .table-wrap {
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    .tx-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .tx-table thead {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+
+    .tx-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+      padding: 10px 16px;
+      background: var(--surface-raised);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .tx-table th.num { text-align: right; }
+
+    .tx-table td {
+      padding: 9px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      vertical-align: middle;
+    }
+
+    .tx-table tbody tr:last-child td {
+      border-bottom: none;
+    }
+
+    .tx-table tbody tr:hover td {
+      background: var(--surface-hover);
+    }
+
+    /* Force the hovered row state for mockup */
+    .tx-table tbody tr.mocked-hover td {
+      background: var(--surface-hover);
+    }
+
+    /* date */
+    .col-date {
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      width: 96px;
+    }
+
+    /* description */
+    .col-desc {
+      font-weight: 500;
+      font-size: 13px;
+    }
+
+    /* account */
+    .col-account {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    /* category */
+    .col-cat {
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .col-cat.uncategorized {
+      color: var(--faint);
+      font-style: italic;
+    }
+
+    .col-cat.transfer {
+      color: var(--muted);
+    }
+
+    .col-cat.income {
+      color: var(--positive);
+    }
+
+    /* amount */
+    .col-amount {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      width: 100px;
+    }
+
+    .col-amount.positive { color: var(--positive); }
+    .col-amount.transfer { color: var(--muted); }
+
+    /* split indicator */
+    .split-mark {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11px;
+      color: var(--secondary);
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    /* tag chip */
+    .tag {
+      display: inline-block;
+      background: color-mix(in srgb, var(--secondary) 12%, transparent);
+      border: 1px solid color-mix(in srgb, var(--secondary) 30%, transparent);
+      color: var(--secondary);
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 2px 5px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+
+    /* row count bar */
+    .table-meta {
+      padding: 9px 16px;
+      background: var(--surface-raised);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--faint);
+      letter-spacing: 0.04em;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="wordmark">manila</div>
+    <nav class="nav">
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M1 2h14v2H1V2zm0 4h8v2H1V6zm0 4h10v2H1v-2z"/></svg>
+        Budget
+      </div>
+      <div class="nav-item active">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M2 2h12v12H2V2zm1 1v10h10V3H3zm2 2h6v1H5V5zm0 2h4v1H5V7zm0 2h5v1H5V9z"/></svg>
+        Transactions
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1l7 4v6l-7 4-7-4V5L8 1zm0 1.5L2.5 5.75v4.5L8 13.5l5.5-3.25v-4.5L8 2.5z"/></svg>
+        Import
+      </div>
+      <div class="nav-item">
+        <svg class="nav-icon" viewBox="0 0 16 16" fill="currentColor"><path d="M3 2h10v2H3V2zm0 3h7v2H3V5zm0 3h10v2H3V8zm0 3h5v2H3v-2z"/></svg>
+        Accounts
+      </div>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="month-badge">AUG 2026</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Filter bar -->
+    <div class="filter-bar">
+      <select class="filter-select">
+        <option>All Accounts</option>
+        <option>Chase Checking</option>
+        <option>Amex Blue Cash</option>
+      </select>
+      <div class="filter-divider"></div>
+      <select class="filter-select">
+        <option>August 2026</option>
+        <option>July 2026</option>
+        <option>June 2026</option>
+      </select>
+      <div class="filter-divider"></div>
+      <input class="search-input" type="text" placeholder="Search transactions...">
+    </div>
+
+    <!-- Table -->
+    <div class="table-wrap">
+      <table class="tx-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Account</th>
+            <th>Category</th>
+            <th class="num">Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+
+          <tr>
+            <td class="col-date">2026-08-19</td>
+            <td class="col-desc">TRADER JOE'S #123</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat">Groceries</td>
+            <td class="col-amount">-$47.23</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-18</td>
+            <td class="col-desc">SHELL OIL 5892341</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat">Gas</td>
+            <td class="col-amount">-$52.10</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-17</td>
+            <td class="col-desc">NETFLIX.COM</td>
+            <td class="col-account">Amex Blue Cash</td>
+            <td class="col-cat">Subscriptions</td>
+            <td class="col-amount">-$15.49</td>
+          </tr>
+
+          <!-- Split row -->
+          <tr>
+            <td class="col-date">2026-08-17</td>
+            <td class="col-desc">
+              VENMO* TRANSFER
+              <span class="split-mark">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><path d="M1 1h3v3H1V1zm5 0h3v3H6V1zm-5 5h3v3H1V6zm5 0h3v3H6V6z"/></svg>
+                split
+              </span>
+            </td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat">Dining Out / Personal</td>
+            <td class="col-amount">-$120.00</td>
+          </tr>
+
+          <!-- Tagged row with hover -->
+          <tr class="mocked-hover">
+            <td class="col-date">2026-08-16</td>
+            <td class="col-desc">
+              WHOLE FOODS MARKET
+              <span class="tag">bulk</span>
+            </td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat">Groceries</td>
+            <td class="col-amount">-$89.34</td>
+          </tr>
+
+          <!-- Income row -->
+          <tr>
+            <td class="col-date">2026-08-15</td>
+            <td class="col-desc">DIRECT DEP PAYROLL</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat income">Income</td>
+            <td class="col-amount positive">+$3,241.67</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-14</td>
+            <td class="col-desc">CHIPOTLE 0892</td>
+            <td class="col-account">Amex Blue Cash</td>
+            <td class="col-cat">Dining Out</td>
+            <td class="col-amount">-$14.75</td>
+          </tr>
+
+          <!-- Uncategorized rows -->
+          <tr>
+            <td class="col-date">2026-08-13</td>
+            <td class="col-desc">AMAZON.COM*9X3K2</td>
+            <td class="col-account">Amex Blue Cash</td>
+            <td class="col-cat uncategorized">uncategorized</td>
+            <td class="col-amount">-$34.99</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-12</td>
+            <td class="col-desc">TARGET 00127</td>
+            <td class="col-account">Amex Blue Cash</td>
+            <td class="col-cat uncategorized">uncategorized</td>
+            <td class="col-amount">-$67.21</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-11</td>
+            <td class="col-desc">CVS PHARMACY 4892</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat uncategorized">uncategorized</td>
+            <td class="col-amount">-$12.44</td>
+          </tr>
+
+          <tr>
+            <td class="col-date">2026-08-10</td>
+            <td class="col-desc">CHEVRON 00892</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat">Gas</td>
+            <td class="col-amount">-$48.90</td>
+          </tr>
+
+          <!-- Transfer -->
+          <tr>
+            <td class="col-date">2026-08-09</td>
+            <td class="col-desc">AMEX AUTOPAY PAYMENT</td>
+            <td class="col-account">Chase Checking</td>
+            <td class="col-cat transfer">Transfer</td>
+            <td class="col-amount transfer">-$450.00</td>
+          </tr>
+
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-meta">12 transactions / August 2026</div>
+
+  </main>
+
+</body>
+</html>

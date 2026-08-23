@@ -14,6 +14,7 @@ pub fn run() {
             commands::accounts::update_account,
             commands::import::parse_csv_preview,
             commands::import::import_csv,
+            commands::import::import_ofx,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

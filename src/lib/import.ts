@@ -26,3 +26,19 @@ export async function importCsv(
     throw new Error(e instanceof Error ? e.message : String(e));
   }
 }
+
+export async function importOfx(
+  content: string,
+  accountId: string,
+  filename: string,
+): Promise<ImportResult> {
+  try {
+    return await invoke<ImportResult>("import_ofx", {
+      content,
+      accountId,
+      filename,
+    });
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+}

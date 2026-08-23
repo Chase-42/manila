@@ -5,12 +5,15 @@
   import { Button } from "$lib/components/ui/button";
   import AccountDialog from "$lib/components/AccountDialog.svelte";
   import CsvImportDialog from "$lib/components/CsvImportDialog.svelte";
+  import OfxImportDialog from "$lib/components/OfxImportDialog.svelte";
 
   let accounts = $state<Account[]>([]);
   let dialogOpen = $state(false);
   let editingAccount = $state<Account | undefined>(undefined);
   let importDialogOpen = $state(false);
   let importingAccount = $state<Account | undefined>(undefined);
+  let ofxDialogOpen = $state(false);
+  let ofxImportingAccount = $state<Account | undefined>(undefined);
 
   async function loadAccounts() {
     try {
@@ -36,6 +39,11 @@
     importingAccount = account;
     importDialogOpen = true;
   }
+
+  function openOfxImport(account: Account) {
+    ofxImportingAccount = account;
+    ofxDialogOpen = true;
+  }
 </script>
 
 <AccountDialog
@@ -46,6 +54,10 @@
 
 {#if importingAccount}
   <CsvImportDialog account={importingAccount} bind:open={importDialogOpen} />
+{/if}
+
+{#if ofxImportingAccount}
+  <OfxImportDialog account={ofxImportingAccount} bind:open={ofxDialogOpen} />
 {/if}
 
 <div class="page">
@@ -80,7 +92,8 @@
               <td>{account.institution}</td>
               <td class="mono">{account.currency}</td>
               <td class="actions">
-                <button class="edit-btn" onclick={() => openImport(account)}>Import</button>
+                <button class="edit-btn" onclick={() => openImport(account)}>Import CSV</button>
+                <button class="edit-btn" onclick={() => openOfxImport(account)}>Import OFX</button>
                 <button class="edit-btn" onclick={() => openEdit(account)}>Edit</button>
               </td>
             </tr>

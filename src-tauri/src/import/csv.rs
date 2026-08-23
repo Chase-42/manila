@@ -1,6 +1,8 @@
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
+use super::ParsedRow;
+
 #[derive(Debug, Serialize)]
 pub struct CsvPreview {
     pub headers: Vec<String>,
@@ -21,16 +23,6 @@ pub struct ColumnMapping {
     pub flip_sign: bool,
     pub debit_col: Option<String>,
     pub credit_col: Option<String>,
-}
-
-/// One successfully parsed row, ready for DB insertion.
-#[derive(Debug)]
-pub struct ParsedRow {
-    pub date: String,
-    pub amount_cents: i64,
-    pub description: String,
-    /// Original row serialized as a JSON object keyed by header name.
-    pub raw_json: String,
 }
 
 /// Strip currency symbols, commas, and parenthetical negation; return cents.
@@ -215,7 +207,7 @@ fn parse_row(
         }
     };
 
-    Ok(ParsedRow { date, amount_cents, description: desc, raw_json: raw_json.to_owned() })
+    Ok(ParsedRow { date, amount_cents, description: desc, raw_json: raw_json.to_owned(), source_id: None })
 }
 
 #[cfg(test)]

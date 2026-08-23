@@ -94,7 +94,7 @@
     display: flex;
     align-items: center;
     padding: 9px 20px;
-    color: var(--muted);
+    color: var(--muted-foreground);
     font-size: 13px;
     font-weight: 500;
     text-decoration: none;
@@ -139,7 +139,7 @@
 
   .db-error p {
     margin: 0;
-    color: var(--muted);
+    color: var(--muted-foreground);
     font-family: var(--font-mono);
     font-size: 12px;
   }

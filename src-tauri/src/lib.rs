@@ -1,4 +1,5 @@
 mod commands;
+mod import;
 mod ledger;
 mod storage;
 
@@ -11,6 +12,8 @@ pub fn run() {
             commands::accounts::list_accounts,
             commands::accounts::create_account,
             commands::accounts::update_account,
+            commands::import::parse_csv_preview,
+            commands::import::import_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

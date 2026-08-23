@@ -17,7 +17,13 @@ export async function createAccount(params: {
   currency: string;
 }): Promise<string> {
   try {
-    return await invoke<string>("create_account", params);
+    return await invoke<string>("create_account", {
+      name: params.name,
+      accountType: params.account_type,
+      subtype: params.subtype,
+      institution: params.institution,
+      currency: params.currency,
+    });
   } catch (e) {
     throw new Error(e instanceof Error ? e.message : String(e));
   }
@@ -31,7 +37,13 @@ export async function updateAccount(params: {
   institution: string;
 }): Promise<void> {
   try {
-    await invoke<void>("update_account", params);
+    await invoke<void>("update_account", {
+      id: params.id,
+      name: params.name,
+      accountType: params.account_type,
+      subtype: params.subtype,
+      institution: params.institution,
+    });
   } catch (e) {
     throw new Error(e instanceof Error ? e.message : String(e));
   }

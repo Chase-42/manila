@@ -16,33 +16,41 @@
   Raw custom properties are also kept on :root for plain CSS usage in layouts.
 */
 @theme {
-  /* Surfaces */
+  /* Burning Acid raw design tokens (used via var() in layout CSS) */
   --color-bg:             #0b0914;
   --color-surface:        #110e1c;
   --color-surface-raised: #18142a;
   --color-surface-hover:  #1e1932;
-
-  /* Borders */
-  --color-border:         #271f3d;
   --color-border-subtle:  #1b1530;
-
-  /* Text */
   --color-text:           #ece6ff;
-  --color-muted:          #7b6fa8;
   --color-faint:          #3b3060;
-
-  /* Accent - acid green */
-  --color-accent:         #b5ff3c;
   --color-accent-ink:     #0b0914;
   --color-accent-dim:     #4a6614;
-
-  /* Secondary - magenta */
-  --color-secondary:      #e040fb;
+  --color-secondary-raw:  #e040fb;
   --color-secondary-dim:  #5c1a63;
-
-  /* Semantic */
-  --color-destructive:    #ff4080;
   --color-positive:       #3bf5a0;
+
+  /* shadcn-svelte standard names - these are what component Tailwind utilities resolve to.
+     Must use --color-* prefix for Tailwind v4 to generate utility classes. */
+  --color-background:             #0b0914;
+  --color-foreground:             #ece6ff;
+  --color-card:                   #110e1c;
+  --color-card-foreground:        #ece6ff;
+  --color-popover:                #18142a;
+  --color-popover-foreground:     #ece6ff;
+  --color-primary:                #b5ff3c;
+  --color-primary-foreground:     #0b0914;
+  --color-secondary:              #18142a;
+  --color-secondary-foreground:   #ece6ff;
+  --color-muted:                  #18142a;
+  --color-muted-foreground:       #7b6fa8;
+  --color-accent:                 #b5ff3c;
+  --color-accent-foreground:      #0b0914;
+  --color-destructive:            #ff4080;
+  --color-destructive-foreground: #ece6ff;
+  --color-border:                 #271f3d;
+  --color-input:                  #271f3d;
+  --color-ring:                   #b5ff3c;
 
   /* Typography */
   --font-display: 'Tektur', system-ui, sans-serif;

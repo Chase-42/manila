@@ -4,10 +4,13 @@
   import type { Account } from "$lib/types/account";
   import { Button } from "$lib/components/ui/button";
   import AccountDialog from "$lib/components/AccountDialog.svelte";
+  import CsvImportDialog from "$lib/components/CsvImportDialog.svelte";
 
   let accounts = $state<Account[]>([]);
   let dialogOpen = $state(false);
   let editingAccount = $state<Account | undefined>(undefined);
+  let importDialogOpen = $state(false);
+  let importingAccount = $state<Account | undefined>(undefined);
 
   async function loadAccounts() {
     try {
@@ -28,6 +31,11 @@
     editingAccount = account;
     dialogOpen = true;
   }
+
+  function openImport(account: Account) {
+    importingAccount = account;
+    importDialogOpen = true;
+  }
 </script>
 
 <AccountDialog
@@ -35,6 +43,10 @@
   bind:open={dialogOpen}
   onsaved={loadAccounts}
 />
+
+{#if importingAccount}
+  <CsvImportDialog account={importingAccount} bind:open={importDialogOpen} />
+{/if}
 
 <div class="page">
   <header class="page-header">
@@ -68,6 +80,7 @@
               <td>{account.institution}</td>
               <td class="mono">{account.currency}</td>
               <td class="actions">
+                <button class="edit-btn" onclick={() => openImport(account)}>Import</button>
                 <button class="edit-btn" onclick={() => openEdit(account)}>Edit</button>
               </td>
             </tr>
@@ -135,7 +148,7 @@
   th {
     padding: 8px 12px;
     text-align: left;
-    color: var(--muted);
+    color: var(--muted-foreground);
     font-weight: 500;
     font-size: 11px;
     letter-spacing: 0.05em;
@@ -168,7 +181,7 @@
   .edit-btn {
     background: none;
     border: none;
-    color: var(--muted);
+    color: var(--muted-foreground);
     font-size: 11px;
     font-family: var(--font-display);
     cursor: pointer;

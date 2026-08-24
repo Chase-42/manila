@@ -14,7 +14,7 @@
     "tauri": "tauri"
   },
   "simple-git-hooks": {
-    "pre-commit": "pnpm check && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml"
+    "pre-commit": "pnpm check && pnpm test && cargo test --manifest-path src-tauri/Cargo.toml && pnpm exec fallow audit --changed-since main --quiet"
   },
   "license": "MIT",
   "dependencies": {

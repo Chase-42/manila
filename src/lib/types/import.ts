@@ -18,3 +18,24 @@ export interface ImportResult {
   skipped_count: number;
   errors: string[];
 }
+
+export interface UncertainMatch {
+  candidate_source_id: string;
+  candidate_date: string;
+  candidate_amount_cents: number;
+  candidate_description: string;
+  existing_raw_record_id: string;
+  existing_source_id: string;
+}
+
+export interface PendingImport {
+  new_count: number;
+  exact_duplicate_count: number;
+  uncertain: UncertainMatch[];
+  errors: string[];
+}
+
+export interface ImportDecision {
+  candidate_source_id: string;
+  accept_as_duplicate: boolean;
+}

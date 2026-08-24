@@ -1,4 +1,5 @@
 pub mod csv;
+pub mod dedup;
 pub mod ofx;
 
 #[derive(Debug)]

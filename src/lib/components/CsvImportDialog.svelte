@@ -1,9 +1,10 @@
 <script lang="ts">
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
-  import { parseCsvPreview, importCsv } from "$lib/import";
-  import type { CsvPreview, ColumnMapping, ImportResult } from "$lib/types/import";
+  import { parseCsvPreview, previewCsvImport, importCsv } from "$lib/import";
+  import type { CsvPreview, ColumnMapping, ImportResult, PendingImport, ImportDecision } from "$lib/types/import";
   import type { Account } from "$lib/types/account";
+  import ImportReviewStep from "$lib/components/ImportReviewStep.svelte";
 
   type ColRole = "ignore" | "date" | "description" | "amount" | "debit" | "credit";
   type Mode = "single" | "split";
@@ -16,7 +17,8 @@
     open?: boolean;
   } = $props();
 
-  let step = $state<1 | 2 | 3>(1);
+  // Steps: 1=pick file, 2=map columns, 3=confirm, 4=review uncertain, 5=result
+  let step = $state<1 | 2 | 3 | 4 | 5>(1);
   let fileName = $state("");
   let fileContent = $state("");
   let preview = $state<CsvPreview | null>(null);
@@ -26,6 +28,10 @@
   let colAssignments = $state<Record<string, ColRole>>({});
   let mode = $state<Mode>("single");
   let flipSign = $state(false);
+
+  let previewing = $state(false);
+  let pendingImport = $state<PendingImport | null>(null);
+  let decisions = $state(new Map<string, boolean>());
 
   let importing = $state(false);
   let importResult = $state<ImportResult | null>(null);
@@ -41,6 +47,9 @@
       colAssignments = {};
       mode = "single";
       flipSign = false;
+      previewing = false;
+      pendingImport = null;
+      decisions = new Map();
       importing = false;
       importResult = null;
       importError = null;
@@ -83,7 +92,6 @@
       if (role !== "ignore") taken.add(role);
     }
 
-    // Prefer split mode if debit+credit found (and no amount)
     const detectedMode: Mode =
       taken.has("debit") && taken.has("credit") && !taken.has("amount") ? "split" : "single";
 
@@ -116,7 +124,6 @@
       (mode === "single" ? amountCol !== null : debitCol !== null && creditCol !== null),
   );
 
-  // Which required roles are already detected vs still missing (used for step 2 banner)
   const detectedLabels = $derived.by(() => {
     const roles = Object.values(colAssignments);
     const required =
@@ -129,7 +136,6 @@
     };
   });
 
-  // Sample rows parsed using current assignments - shown in the step 3 preview table
   const parsedSample = $derived.by(() => {
     if (!preview) return [];
     const hdrs = preview.headers;
@@ -218,12 +224,8 @@
     }
   }
 
-  async function handleConfirm() {
-    if (importing) return;
-    importing = true;
-    importError = null;
-
-    const mapping: ColumnMapping = {
+  function buildMapping(): ColumnMapping {
+    return {
       date_col: dateCol!,
       description_col: descCol!,
       amount_col: mode === "single" ? amountCol : null,
@@ -231,9 +233,55 @@
       debit_col: mode === "split" ? debitCol : null,
       credit_col: mode === "split" ? creditCol : null,
     };
+  }
+
+  async function handleConfirm() {
+    if (previewing) return;
+    previewing = true;
+    importError = null;
 
     try {
-      importResult = await importCsv(fileContent, mapping, account.id, fileName);
+      const result = await previewCsvImport(fileContent, buildMapping(), account.id);
+      pendingImport = result;
+
+      if (result.new_count === 0 && result.uncertain.length === 0) {
+        // All exact dups, nothing to write.
+        importResult = {
+          batch_id: "",
+          imported_count: 0,
+          skipped_count: result.exact_duplicate_count,
+          errors: result.errors,
+        };
+        step = 5;
+      } else if (result.uncertain.length > 0) {
+        decisions = new Map();
+        step = 4;
+      } else {
+        // No uncertain matches, proceed directly to commit.
+        await runImport([]);
+      }
+    } catch (e) {
+      importError = e instanceof Error ? e.message : String(e);
+    } finally {
+      previewing = false;
+    }
+  }
+
+  async function handleReviewConfirm() {
+    const decisionsArr: ImportDecision[] = [];
+    for (const [sourceId, isDuplicate] of decisions) {
+      decisionsArr.push({ candidate_source_id: sourceId, accept_as_duplicate: isDuplicate });
+    }
+    await runImport(decisionsArr);
+  }
+
+  async function runImport(decisionsArr: ImportDecision[]) {
+    if (importing) return;
+    importing = true;
+    importError = null;
+    try {
+      importResult = await importCsv(fileContent, buildMapping(), account.id, fileName, decisionsArr);
+      step = 5;
     } catch (e) {
       importError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -246,7 +294,7 @@
   <Dialog.Content class="sm:max-w-2xl">
     <Dialog.Header>
       <Dialog.Title>
-        {#if step === 1}Import CSV{:else if step === 2}Check column mapping{:else}Review & import{/if}
+        {#if step === 1}Import CSV{:else if step === 2}Check column mapping{:else if step === 3}Review & import{:else if step === 4}Review duplicates{:else}Import result{/if}
       </Dialog.Title>
     </Dialog.Header>
 
@@ -272,7 +320,6 @@
       <div class="step">
         <p class="filename">{fileName}</p>
 
-        <!-- Detection status banner -->
         <div class="detection-status">
           {#if detectedLabels.found.length > 0}
             <span class="found">Detected: {detectedLabels.found.join(", ")}</span>
@@ -361,13 +408,82 @@
 
     {:else if step === 3}
       <div class="step">
-        {#if importResult}
-          <p class="success">Import complete.</p>
-          <p class="summary">
-            {importResult.imported_count} row{importResult.imported_count === 1 ? "" : "s"} imported{importResult.skipped_count > 0
-              ? `, ${importResult.skipped_count} skipped`
-              : ""}.
+        <div class="confirm-header">
+          <p class="context">
+            ~{estimatedRowCount} transaction{estimatedRowCount === 1 ? "" : "s"} from
+            <strong>{fileName}</strong> into <strong>{account.name}</strong>
           </p>
+          <button class="remap-link" onclick={() => (step = 2)}>Change column mapping</button>
+        </div>
+
+        {#if parsedSample.length > 0}
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr class="col-names">
+                  <th>Date</th>
+                  <th>Description</th>
+                  <th class="right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {#each parsedSample as row}
+                  <tr>
+                    <td class="mono">{row.date}</td>
+                    <td>{row.description}</td>
+                    <td class="mono right">{row.amount}</td>
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          </div>
+          <p class="sample-note">Showing first {parsedSample.length} rows</p>
+        {/if}
+
+        {#if importError}
+          <p class="error">{importError}</p>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="ghost" onclick={() => (step = 2)} disabled={previewing}>Back</Button>
+          <Button onclick={handleConfirm} disabled={previewing}>
+            {previewing ? "Checking for duplicates..." : "Import transactions"}
+          </Button>
+        </Dialog.Footer>
+      </div>
+
+    {:else if step === 4 && pendingImport}
+      <div class="step">
+        <ImportReviewStep uncertain={pendingImport.uncertain} bind:decisions />
+
+        {#if importError}
+          <p class="error">{importError}</p>
+        {/if}
+
+        <Dialog.Footer>
+          <Button variant="ghost" onclick={() => (step = 3)} disabled={importing}>Back</Button>
+          <Button onclick={handleReviewConfirm} disabled={importing}>
+            {importing ? "Importing..." : "Confirm & import"}
+          </Button>
+        </Dialog.Footer>
+      </div>
+
+    {:else if step === 5}
+      <div class="step">
+        {#if importResult}
+          {#if importResult.imported_count === 0 && importResult.skipped_count > 0}
+            <p class="muted">Nothing new to import.</p>
+            <p class="summary">
+              {importResult.skipped_count} duplicate{importResult.skipped_count === 1 ? "" : "s"} detected, all already in your ledger.
+            </p>
+          {:else}
+            <p class="success">Import complete.</p>
+            <p class="summary">
+              {importResult.imported_count} row{importResult.imported_count === 1 ? "" : "s"} imported{importResult.skipped_count > 0
+                ? `, ${importResult.skipped_count} skipped`
+                : ""}.
+            </p>
+          {/if}
           {#if importResult.errors.length > 0}
             <ul class="error-list">
               {#each importResult.errors as err}
@@ -375,53 +491,10 @@
               {/each}
             </ul>
           {/if}
-          <Dialog.Footer>
-            <Button onclick={() => (open = false)}>Done</Button>
-          </Dialog.Footer>
-        {:else}
-          <div class="confirm-header">
-            <p class="context">
-              ~{estimatedRowCount} transaction{estimatedRowCount === 1 ? "" : "s"} from
-              <strong>{fileName}</strong> into <strong>{account.name}</strong>
-            </p>
-            <button class="remap-link" onclick={() => (step = 2)}>Change column mapping</button>
-          </div>
-
-          {#if parsedSample.length > 0}
-            <div class="table-scroll">
-              <table>
-                <thead>
-                  <tr class="col-names">
-                    <th>Date</th>
-                    <th>Description</th>
-                    <th class="right">Amount</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {#each parsedSample as row}
-                    <tr>
-                      <td class="mono">{row.date}</td>
-                      <td>{row.description}</td>
-                      <td class="mono right">{row.amount}</td>
-                    </tr>
-                  {/each}
-                </tbody>
-              </table>
-            </div>
-            <p class="sample-note">Showing first {parsedSample.length} rows</p>
-          {/if}
-
-          {#if importError}
-            <p class="error">{importError}</p>
-          {/if}
-
-          <Dialog.Footer>
-            <Button variant="ghost" onclick={() => (step = 2)} disabled={importing}>Back</Button>
-            <Button onclick={handleConfirm} disabled={importing}>
-              {importing ? "Importing..." : "Import transactions"}
-            </Button>
-          </Dialog.Footer>
         {/if}
+        <Dialog.Footer>
+          <Button onclick={() => (open = false)}>Done</Button>
+        </Dialog.Footer>
       </div>
     {/if}
   </Dialog.Content>
@@ -594,6 +667,13 @@
   .success {
     font-size: 13px;
     color: var(--positive);
+    margin: 0;
+    font-weight: 500;
+  }
+
+  .muted {
+    font-size: 13px;
+    color: var(--muted-foreground);
     margin: 0;
     font-weight: 500;
   }

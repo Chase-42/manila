@@ -13,6 +13,8 @@ pub fn run() {
             commands::accounts::create_account,
             commands::accounts::update_account,
             commands::import::parse_csv_preview,
+            commands::import::preview_csv_import,
+            commands::import::preview_ofx_import,
             commands::import::import_csv,
             commands::import::import_ofx,
         ])

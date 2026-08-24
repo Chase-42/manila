@@ -8,10 +8,10 @@ importers:
 
   .:
     dependencies:
-      '@fontsource/kode-mono':
+      '@fontsource/chakra-petch':
         specifier: ^5.3.0
         version: 5.3.0
-      '@fontsource/tektur':
+      '@fontsource/kode-mono':
         specifier: ^5.3.0
         version: 5.3.0
       '@tauri-apps/api':
@@ -289,11 +289,11 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
+  '@fontsource/chakra-petch@5.3.0':
+    resolution: {integrity: sha512-QZvbM/q2R6n1pg2x+TJPftZmBNS+ADU37L4Z4L/6UJIz+JZ/SRaEf8usPFRiP7Ht28sIideMu/Bm1SnGlSrwNw==}
+
   '@fontsource/kode-mono@5.3.0':
     resolution: {integrity: sha512-9xtuE63XocejXWwHa1vjV9IfQ1JbSKyCwyPV2SfFI+lgoMmuTKwI1DXZxxjZT+Q7qOdflwxj9fRrosGrh1YWpg==}
-
-  '@fontsource/tektur@5.3.0':
-    resolution: {integrity: sha512-Yp5ejjv/9+bxoT2zl6aKI3uBkuwLJ/aA+yAf1e9iUoaj6iE26QDL78pKTbpZj0+sm3gSOjy0p1XyKmnIGyCD9Q==}
 
   '@internationalized/date@3.12.3':
     resolution: {integrity: sha512-fuLX+3ZKLsxI73y8b01EG/WjHb6gE6weCqlfawPO27kBWGMh9G1yH6Csv1uU7/cac9H2GHmOMt6CjmuQ1aia4Q==}
@@ -1453,9 +1453,9 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@fontsource/kode-mono@5.3.0': {}
+  '@fontsource/chakra-petch@5.3.0': {}
 
-  '@fontsource/tektur@5.3.0': {}
+  '@fontsource/kode-mono@5.3.0': {}
 
   '@internationalized/date@3.12.3':
     dependencies:

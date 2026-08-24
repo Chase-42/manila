@@ -3,6 +3,8 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/stores";
+  import { LayoutDashboard, ArrowLeftRight, Wallet, Tag } from '@lucide/svelte';
+  import type { Component } from 'svelte';
 
   let { children } = $props();
 
@@ -18,11 +20,17 @@
     }
   });
 
-  const navLinks = [
-    { href: "/budget", label: "Budget" },
-    { href: "/transactions", label: "Transactions" },
-    { href: "/accounts", label: "Accounts" },
-    { href: "/categories", label: "Categories" },
+  interface NavLink {
+    href: string;
+    label: string;
+    Icon: Component<{ size?: number }>;
+  }
+
+  const navLinks: NavLink[] = [
+    { href: "/budget", label: "Budget", Icon: LayoutDashboard },
+    { href: "/transactions", label: "Transactions", Icon: ArrowLeftRight },
+    { href: "/accounts", label: "Accounts", Icon: Wallet },
+    { href: "/categories", label: "Categories", Icon: Tag },
   ];
 </script>
 
@@ -37,14 +45,15 @@
     <nav class="sidebar">
       <div class="wordmark">manila</div>
       <ul class="nav">
-        {#each navLinks as link}
+        {#each navLinks as { href, label, Icon } (href)}
           <li>
             <a
-              href={link.href}
+              href={href}
               class="nav-item"
-              class:active={$page.url.pathname.startsWith(link.href)}
+              class:active={$page.url.pathname.startsWith(href)}
             >
-              {link.label}
+              <Icon size={16} />
+              <span>{label}</span>
             </a>
           </li>
         {/each}
@@ -64,22 +73,21 @@
   }
 
   .sidebar {
-    width: 220px;
-    min-width: 220px;
-    background: var(--surface-raised);
-    border-right: 1px solid var(--border);
+    width: 240px;
+    min-width: 240px;
+    background: var(--sidebar);
+    border-right: 1px solid var(--sidebar-border);
     display: flex;
     flex-direction: column;
-    box-shadow: 4px 0 24px 0 color-mix(in srgb, var(--accent) 8%, transparent);
   }
 
   .wordmark {
     padding: 20px 20px 16px;
     font-size: 22px;
     font-weight: 700;
-    color: var(--accent);
+    color: var(--sidebar-primary);
     letter-spacing: 0.06em;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--sidebar-border);
   }
 
   .nav {
@@ -94,8 +102,9 @@
   .nav-item {
     display: flex;
     align-items: center;
+    gap: 10px;
     padding: 9px 20px;
-    color: var(--muted-foreground);
+    color: var(--sidebar-foreground);
     font-size: 13px;
     font-weight: 500;
     text-decoration: none;
@@ -104,14 +113,14 @@
   }
 
   .nav-item:hover {
-    color: var(--text);
-    background: var(--surface-hover);
+    color: var(--foreground);
+    background: color-mix(in srgb, var(--sidebar-accent) 40%, transparent);
   }
 
   .nav-item.active {
-    color: var(--accent);
-    border-left-color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 6%, transparent);
+    color: var(--sidebar-primary);
+    border-left-color: var(--sidebar-primary);
+    background: var(--sidebar-accent);
   }
 
   .content {

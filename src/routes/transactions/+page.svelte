@@ -4,6 +4,7 @@
   import { formatCents } from '$lib/money';
   import type { TransactionRow } from '$lib/types/transaction';
   import TransactionDetail from '$lib/components/TransactionDetail.svelte';
+  import { ArrowLeftRight } from '@lucide/svelte';
 
   let transactions = $state<TransactionRow[]>([]);
   let loading = $state(true);
@@ -32,6 +33,14 @@
     detailOpen = false;
     await load();
   }
+
+  function formatDate(iso: string): string {
+    const [year, month, day] = iso.split('-').map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+      month: 'short',
+      day: 'numeric',
+    });
+  }
 </script>
 
 {#if selected}
@@ -44,7 +53,10 @@
 
 <div class="page">
   <header class="page-header">
-    <h1>Transactions</h1>
+    <h1 class="heading">Transactions</h1>
+    {#if !loading}
+      <p class="subtitle">{transactions.length} transaction{transactions.length === 1 ? '' : 's'}</p>
+    {/if}
   </header>
 
   {#if loading}
@@ -53,16 +65,21 @@
     </div>
   {:else if transactions.length === 0}
     <div class="empty-state">
-      <p>No transactions yet. Import a file from Accounts to get started.</p>
+      <div class="empty-icon">
+        <ArrowLeftRight size={36} />
+      </div>
+      <h2 class="empty-heading">No transactions yet</h2>
+      <p class="empty-body">Import a file from an account to get started.</p>
+      <a href="/accounts" class="cta-link">Go to Accounts</a>
     </div>
   {:else}
     <div class="table-wrap">
       <table>
         <thead>
           <tr>
-            <th>Date</th>
-            <th>Account</th>
-            <th>Description</th>
+            <th class="date-col">Date</th>
+            <th>Merchant</th>
+            <th>Category</th>
             <th class="amount-col">Amount</th>
             <th class="reviewed-col">Reviewed</th>
           </tr>
@@ -70,15 +87,24 @@
         <tbody>
           {#each transactions as tx (tx.id)}
             <tr onclick={() => openDetail(tx)}>
-              <td class="date">{tx.date}</td>
-              <td class="account">{tx.account_name}</td>
-              <td class="description">{tx.description}</td>
-              <td class="amount" class:negative={tx.amount_cents < 0}>
-                {formatCents(tx.amount_cents)}
+              <td class="date">{formatDate(tx.date)}</td>
+              <td class="merchant">
+                <span class="merchant-name">{tx.description}</span>
+                <span class="merchant-account">{tx.account_name}</span>
+              </td>
+              <td class="category-cell">
+                <span class="category-chip">Uncategorized</span>
+              </td>
+              <td
+                class="amount"
+                class:negative={tx.amount_cents < 0}
+                class:positive={tx.amount_cents > 0}
+              >
+                {tx.amount_cents > 0 ? '+' : ''}{formatCents(tx.amount_cents)}
               </td>
               <td class="reviewed-cell">
                 {#if tx.reviewed}
-                  <span class="reviewed-dot" aria-label="Reviewed"></span>
+                  <span class="reviewed-badge">&#10003;</span>
                 {/if}
               </td>
             </tr>
@@ -97,31 +123,66 @@
   }
 
   .page-header {
-    display: flex;
-    align-items: center;
-    padding: 16px 24px;
-    background: var(--surface-raised);
+    padding: 28px 32px 20px;
+    background: var(--card);
     border-bottom: 1px solid var(--border);
   }
 
-  h1 {
+  .heading {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--foreground);
+    margin: 0 0 6px;
+    letter-spacing: 0.02em;
+  }
+
+  .subtitle {
     margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--text);
-    letter-spacing: 0.04em;
+    font-size: 12px;
+    color: var(--muted-foreground);
   }
 
   .empty-state {
     flex: 1;
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
+    gap: 10px;
   }
 
-  .empty-state p {
-    color: var(--faint);
+  .empty-icon {
+    color: var(--muted-foreground);
+    margin-bottom: 4px;
+  }
+
+  .empty-heading {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--foreground);
+    margin: 0;
+  }
+
+  .empty-body {
     font-size: 13px;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+
+  .cta-link {
+    display: inline-block;
+    margin-top: 8px;
+    padding: 8px 18px;
+    background: var(--primary);
+    color: var(--primary-foreground);
+    text-decoration: none;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+  }
+
+  .cta-link:hover {
+    opacity: 0.9;
   }
 
   .table-wrap {
@@ -138,7 +199,7 @@
   thead {
     position: sticky;
     top: 0;
-    background: var(--surface-raised);
+    background: var(--card);
     z-index: 1;
   }
 
@@ -164,22 +225,47 @@
     cursor: pointer;
   }
 
+  .date-col {
+    width: 72px;
+  }
+
   .date {
     font-family: var(--font-mono);
     color: var(--muted-foreground);
     white-space: nowrap;
+    font-size: 12px;
   }
 
-  .account {
-    color: var(--muted-foreground);
-    font-size: 11px;
+  .merchant {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-width: 360px;
   }
 
-  .description {
-    max-width: 320px;
+  .merchant-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--foreground);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .merchant-account {
+    font-size: 11px;
+    color: var(--muted-foreground);
+  }
+
+  .category-chip {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    padding: 2px 7px;
   }
 
   .amount-col {
@@ -197,6 +283,10 @@
     color: var(--destructive);
   }
 
+  .amount.positive {
+    color: var(--primary);
+  }
+
   .reviewed-col {
     text-align: center;
     width: 72px;
@@ -206,10 +296,13 @@
     text-align: center;
   }
 
-  .reviewed-dot {
+  .reviewed-badge {
     display: inline-block;
-    width: 6px;
-    height: 6px;
-    background: var(--accent);
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    background: var(--muted);
+    color: var(--muted-foreground);
+    padding: 2px 7px;
   }
 </style>

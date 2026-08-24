@@ -19,6 +19,9 @@ pub fn run() {
             commands::import::import_ofx,
             commands::transactions::list_transactions,
             commands::transactions::upsert_transaction_meta,
+            commands::categories::list_categories,
+            commands::categories::create_category,
+            commands::categories::update_category,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

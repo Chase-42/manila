@@ -20,6 +20,7 @@ pub fn init_db(app: AppHandle) -> Result<(), String> {
 
     let mut conn = open_connection(path_str).map_err(|e| e.to_string())?;
     run_migrations(&mut conn).map_err(|e| e.to_string())?;
+    crate::storage::seed::seed_categories(&conn).map_err(|e| e.to_string())?;
 
     app.manage(Mutex::new(conn));
     Ok(())

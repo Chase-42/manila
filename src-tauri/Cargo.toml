@@ -27,4 +27,5 @@ uuid = { version = "1", features = ["v4"] }
 thiserror = "2"
 csv = "1"
 chrono = "0.4"
+ts-rs = "10"
 

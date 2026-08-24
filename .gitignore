@@ -17,3 +17,5 @@ src-tauri/target/
 .claude/
 blueprint/
 CLAUDE.md
+.fallow/
+.mcp.json

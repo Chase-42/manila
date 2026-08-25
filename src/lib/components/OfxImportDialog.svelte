@@ -64,34 +64,54 @@
     reader.readAsText(file);
   }
 
+  function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
+  async function applyPreviewResult(result: PendingImport): Promise<void> {
+    pendingImport = result;
+    if (result.new_count === 0 && result.uncertain.length === 0) {
+      importResult = { batch_id: "", imported_count: 0, skipped_count: result.exact_duplicate_count, errors: result.errors };
+      step = 4;
+    } else if (result.uncertain.length > 0) {
+      decisions = new Map();
+      step = 3;
+    } else {
+      await runImport([]);
+    }
+  }
+
   async function handleConfirm() {
     if (previewing) return;
     previewing = true;
     importError = null;
     try {
-      const result = await previewOfxImport(fileContent, account.id);
-      pendingImport = result;
-
-      if (result.new_count === 0 && result.uncertain.length === 0) {
-        importResult = {
-          batch_id: "",
-          imported_count: 0,
-          skipped_count: result.exact_duplicate_count,
-          errors: result.errors,
-        };
-        step = 4;
-      } else if (result.uncertain.length > 0) {
-        decisions = new Map();
-        step = 3;
-      } else {
-        await runImport([]);
-      }
+      await applyPreviewResult(await previewOfxImport(fileContent, account.id));
     } catch (e) {
-      importError = e instanceof Error ? e.message : String(e);
+      importError = errorMessage(e);
     } finally {
       previewing = false;
     }
   }
+
+  // --- Result display helpers ---
+
+  function plural(n: number, word: string): string {
+    return `${n} ${word}${n === 1 ? "" : "s"}`;
+  }
+
+  const resultIsEmpty = $derived(
+    importResult !== null &&
+      importResult.imported_count === 0 &&
+      importResult.skipped_count > 0,
+  );
+  const resultSummaryText = $derived.by(() => {
+    if (!importResult) return "";
+    const { imported_count: n, skipped_count: s } = importResult;
+    if (resultIsEmpty) return `${plural(s, "duplicate")} detected, all already in your ledger.`;
+    return `${plural(n, "transaction")} imported${s > 0 ? `, ${s} skipped` : ""}.`;
+  });
+  const resultErrors = $derived(importResult?.errors ?? []);
 
   async function handleReviewConfirm() {
     const decisionsArr: ImportDecision[] = [];
@@ -116,6 +136,83 @@
   }
 </script>
 
+{#snippet filePickStep()}
+  <div class="step">
+    <p class="context">
+      Importing into <strong>{account.name}</strong>
+    </p>
+    {#if fileError}
+      <p class="error">{fileError}</p>
+    {/if}
+    <input
+      bind:this={fileInputEl}
+      type="file"
+      accept=".ofx,.qfx"
+      style="display:none"
+      onchange={handleFileChange}
+    />
+    <Button onclick={() => fileInputEl?.click()}>Choose OFX / QFX file</Button>
+  </div>
+{/snippet}
+
+{#snippet confirmStep()}
+  <div class="step">
+    <p class="context">
+      <strong>{fileName}</strong> into <strong>{account.name}</strong>
+    </p>
+    {#if importError}
+      <p class="error">{importError}</p>
+    {/if}
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (step = 1)} disabled={previewing}>Back</Button>
+      <Button onclick={handleConfirm} disabled={previewing}>
+        {previewing ? "Checking for duplicates..." : "Import transactions"}
+      </Button>
+    </Dialog.Footer>
+  </div>
+{/snippet}
+
+{#snippet reviewStep()}
+  <div class="step">
+    {#if pendingImport}
+      <ImportReviewStep uncertain={pendingImport.uncertain} bind:decisions />
+    {/if}
+
+    {#if importError}
+      <p class="error">{importError}</p>
+    {/if}
+
+    <Dialog.Footer>
+      <Button variant="ghost" onclick={() => (step = 2)} disabled={importing}>Back</Button>
+      <Button onclick={handleReviewConfirm} disabled={importing}>
+        {importing ? "Importing..." : "Confirm & import"}
+      </Button>
+    </Dialog.Footer>
+  </div>
+{/snippet}
+
+{#snippet resultStep()}
+  <div class="step">
+    {#if resultIsEmpty}
+      <p class="muted">Nothing new to import.</p>
+      <p class="summary">{resultSummaryText}</p>
+    {:else if importResult}
+      <p class="success">Import complete.</p>
+      <p class="summary">{resultSummaryText}</p>
+    {/if}
+    {#if resultErrors.length > 0}
+      <ul class="error-list">
+        {#each resultErrors as err}
+          <li>{err}</li>
+        {/each}
+      </ul>
+    {/if}
+    <Dialog.Footer>
+      <Button onclick={() => (open = false)}>Done</Button>
+    </Dialog.Footer>
+  </div>
+{/snippet}
+
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-lg">
     <Dialog.Header>
@@ -123,83 +220,13 @@
     </Dialog.Header>
 
     {#if step === 1}
-      <div class="step">
-        <p class="context">
-          Importing into <strong>{account.name}</strong>
-        </p>
-        {#if fileError}
-          <p class="error">{fileError}</p>
-        {/if}
-        <input
-          bind:this={fileInputEl}
-          type="file"
-          accept=".ofx,.qfx"
-          style="display:none"
-          onchange={handleFileChange}
-        />
-        <Button onclick={() => fileInputEl?.click()}>Choose OFX / QFX file</Button>
-      </div>
-
+      {@render filePickStep()}
     {:else if step === 2}
-      <div class="step">
-        <p class="context">
-          <strong>{fileName}</strong> into <strong>{account.name}</strong>
-        </p>
-        {#if importError}
-          <p class="error">{importError}</p>
-        {/if}
-        <Dialog.Footer>
-          <Button variant="ghost" onclick={() => (step = 1)} disabled={previewing}>Back</Button>
-          <Button onclick={handleConfirm} disabled={previewing}>
-            {previewing ? "Checking for duplicates..." : "Import transactions"}
-          </Button>
-        </Dialog.Footer>
-      </div>
-
+      {@render confirmStep()}
     {:else if step === 3 && pendingImport}
-      <div class="step">
-        <ImportReviewStep uncertain={pendingImport.uncertain} bind:decisions />
-
-        {#if importError}
-          <p class="error">{importError}</p>
-        {/if}
-
-        <Dialog.Footer>
-          <Button variant="ghost" onclick={() => (step = 2)} disabled={importing}>Back</Button>
-          <Button onclick={handleReviewConfirm} disabled={importing}>
-            {importing ? "Importing..." : "Confirm & import"}
-          </Button>
-        </Dialog.Footer>
-      </div>
-
+      {@render reviewStep()}
     {:else if step === 4}
-      <div class="step">
-        {#if importResult}
-          {#if importResult.imported_count === 0 && importResult.skipped_count > 0}
-            <p class="muted">Nothing new to import.</p>
-            <p class="summary">
-              {importResult.skipped_count} duplicate{importResult.skipped_count === 1 ? "" : "s"} detected, all already in your ledger.
-            </p>
-          {:else}
-            <p class="success">Import complete.</p>
-            <p class="summary">
-              {importResult.imported_count} transaction{importResult.imported_count === 1 ? "" : "s"} imported{importResult.skipped_count > 0
-                ? `, ${importResult.skipped_count} skipped`
-                : ""}.
-            </p>
-          {/if}
-          {#if importResult.errors.length > 0}
-            <ul class="error-list">
-              {#each importResult.errors as err}
-                <li>{err}</li>
-              {/each}
-            </ul>
-          {/if}
-        {/if}
-        <Dialog.Footer>
-          <Button onclick={() => (open = false)}>Done</Button>
-        </Dialog.Footer>
-      </div>
+      {@render resultStep()}
     {/if}
   </Dialog.Content>
 </Dialog.Root>

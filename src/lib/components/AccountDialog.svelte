@@ -29,39 +29,47 @@
   let error = $state<string | null>(null);
   let saving = $state(false);
 
+  function initFormFields(acc: Account | undefined) {
+    if (!acc) {
+      name = "";
+      account_type = "depository";
+      subtype = "";
+      institution = "";
+      currency = "USD";
+      error = null;
+      return;
+    }
+    name = acc.name;
+    account_type = acc.account_type;
+    subtype = acc.subtype;
+    institution = acc.institution;
+    currency = acc.currency;
+    error = null;
+  }
+
   // Populate form fields whenever the dialog opens, using the current account prop
   $effect(() => {
-    if (open) {
-      name = account?.name ?? "";
-      account_type = account?.account_type ?? "depository";
-      subtype = account?.subtype ?? "";
-      institution = account?.institution ?? "";
-      currency = account?.currency ?? "USD";
-      error = null;
-    }
+    if (open) initFormFields(account);
   });
+
+  function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
 
   async function handleSubmit(e: Event) {
     e.preventDefault();
     error = null;
     saving = true;
-
     try {
-      if (isEdit && account) {
-        await updateAccount({
-          id: account.id,
-          name,
-          account_type,
-          subtype,
-          institution,
-        });
+      if (isEdit) {
+        await updateAccount({ id: account!.id, name, account_type, subtype, institution });
       } else {
         await createAccount({ name, account_type, subtype, institution, currency });
       }
       open = false;
       onsaved();
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
+    } catch (err) {
+      error = errorMessage(err);
     } finally {
       saving = false;
     }

@@ -49,10 +49,17 @@
     if (!file) return;
     fileName = file.name;
     fileError = null;
+    if (file.size > 5 * 1024 * 1024) {
+      fileError = "File is too large (max 5 MB). Export a smaller date range.";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       fileContent = (ev.target?.result as string) ?? "";
       step = 2;
+    };
+    reader.onerror = () => {
+      fileError = "Could not read the selected file.";
     };
     reader.readAsText(file);
   }

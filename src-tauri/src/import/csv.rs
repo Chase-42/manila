@@ -246,6 +246,16 @@ mod tests {
         assert_eq!(parse_amount("0.01").unwrap(), 1);
     }
 
+    #[test]
+    fn amount_empty_string_returns_err() {
+        assert!(parse_amount("").is_err());
+    }
+
+    #[test]
+    fn amount_non_numeric_returns_err() {
+        assert!(parse_amount("PENDING").is_err());
+    }
+
     // --- parse_date ---
 
     #[test]
@@ -266,5 +276,26 @@ mod tests {
     #[test]
     fn date_us_short_year() {
         assert_eq!(parse_date("08/22/26").unwrap(), "2026-08-22");
+    }
+
+    // --- parse_rows: both debit and credit filled ---
+
+    #[test]
+    fn parse_rows_both_debit_and_credit_filled_uses_debit() {
+        // Some banks emit non-zero values in both columns on the same row.
+        // The heuristic: if debit != 0, use -debit (outflow); else use credit.
+        let csv = "Date,Description,Debit,Credit\n2026-01-15,Coffee,12.50,12.50\n";
+        let mapping = ColumnMapping {
+            date_col: "Date".into(),
+            description_col: "Description".into(),
+            amount_col: None,
+            flip_sign: false,
+            debit_col: Some("Debit".into()),
+            credit_col: Some("Credit".into()),
+        };
+        let rows = parse_rows(csv, &mapping).unwrap();
+        assert_eq!(rows.len(), 1);
+        // Debit wins: 12.50 debit -> -1250 cents (outflow)
+        assert_eq!(rows[0].as_ref().unwrap().amount_cents, -1250);
     }
 }

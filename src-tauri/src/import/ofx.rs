@@ -9,7 +9,9 @@ use super::csv::parse_amount;
 /// next `<`) and OFX 2.x (value ends at `</TAG>`). Tag matching is
 /// case-insensitive because exporters vary.
 fn extract_tag(block: &str, tag: &str) -> Option<String> {
-    let lower_block = block.to_lowercase();
+    // to_ascii_lowercase preserves byte positions; to_lowercase can expand
+    // some Unicode code points, making the offset into `block` wrong.
+    let lower_block = block.to_ascii_lowercase();
     let open_tag = format!("<{}>", tag.to_lowercase());
     let pos = lower_block.find(&open_tag)?;
     let start = pos + open_tag.len();

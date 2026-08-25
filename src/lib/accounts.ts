@@ -17,6 +17,7 @@ export async function createAccount(params: {
   currency: string;
 }): Promise<string> {
   try {
+    // Tauri v2 converts camelCase keys to snake_case for Rust
     return await invoke<string>("create_account", {
       name: params.name,
       accountType: params.account_type,
@@ -37,6 +38,7 @@ export async function updateAccount(params: {
   institution: string;
 }): Promise<void> {
   try {
+    // Tauri v2 converts camelCase keys to snake_case for Rust
     await invoke<void>("update_account", {
       id: params.id,
       name: params.name,

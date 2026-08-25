@@ -136,6 +136,15 @@
     };
   });
 
+  // Mirror Rust sign logic: debit = outflow (negative), credit = inflow (positive).
+  // Debit takes priority when both are non-empty, matching parse_row in csv.rs.
+  function resolveSampleAmount(amount: string, debit: string, credit: string): string {
+    if (amount) return amount;
+    if (debit) return `-${debit}`;
+    if (credit) return `+${credit}`;
+    return "";
+  }
+
   const parsedSample = $derived.by(() => {
     if (!preview) return [];
     const hdrs = preview.headers;
@@ -145,20 +154,15 @@
     const bi = mode === "split" && debitCol !== null ? hdrs.indexOf(debitCol) : -1;
     const ci = mode === "split" && creditCol !== null ? hdrs.indexOf(creditCol) : -1;
 
-    return preview.sample_rows.map((row) => {
-      let amount = "";
-      if (ai >= 0) amount = row[ai] ?? "";
-      else if (bi >= 0 || ci >= 0) {
-        const d = bi >= 0 ? row[bi] ?? "" : "";
-        const c = ci >= 0 ? row[ci] ?? "" : "";
-        amount = d || c;
-      }
-      return {
-        date: di >= 0 ? (row[di] ?? "") : "",
-        description: xi >= 0 ? (row[xi] ?? "") : "",
-        amount,
-      };
-    });
+    return preview.sample_rows.map((row) => ({
+      date: di >= 0 ? (row[di] ?? "") : "",
+      description: xi >= 0 ? (row[xi] ?? "") : "",
+      amount: resolveSampleAmount(
+        ai >= 0 ? (row[ai] ?? "") : "",
+        bi >= 0 ? (row[bi] ?? "") : "",
+        ci >= 0 ? (row[ci] ?? "") : "",
+      ),
+    }));
   });
 
   const estimatedRowCount = $derived(
@@ -195,10 +199,17 @@
     if (!file) return;
     fileName = file.name;
     previewError = null;
+    if (file.size > 5 * 1024 * 1024) {
+      previewError = "File is too large (max 5 MB). Export a smaller date range.";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (ev) => {
       fileContent = (ev.target?.result as string) ?? "";
       loadPreview();
+    };
+    reader.onerror = () => {
+      previewError = "Could not read the selected file.";
     };
     reader.readAsText(file);
   }

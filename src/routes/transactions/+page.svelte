@@ -152,49 +152,6 @@
     color: var(--muted-foreground);
   }
 
-  .empty-state {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-  }
-
-  .empty-icon {
-    color: var(--muted-foreground);
-    margin-bottom: 4px;
-  }
-
-  .empty-heading {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--foreground);
-    margin: 0;
-  }
-
-  .empty-body {
-    font-size: 13px;
-    color: var(--muted-foreground);
-    margin: 0;
-  }
-
-  .cta-link {
-    display: inline-block;
-    margin-top: 8px;
-    padding: 8px 18px;
-    background: var(--primary);
-    color: var(--primary-foreground);
-    text-decoration: none;
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.03em;
-  }
-
-  .cta-link:hover {
-    opacity: 0.9;
-  }
-
   .table-wrap {
     flex: 1;
     overflow: auto;

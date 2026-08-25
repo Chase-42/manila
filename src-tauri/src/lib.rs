@@ -23,6 +23,9 @@ pub fn run() {
             commands::categories::create_category,
             commands::categories::update_category,
             commands::categories::upsert_category_assignment,
+            commands::budget::get_budget_month,
+            commands::budget::set_allocation,
+            commands::budget::set_monthly_target,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

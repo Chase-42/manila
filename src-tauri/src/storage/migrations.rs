@@ -2,7 +2,12 @@ use rusqlite::{Connection, Result};
 
 // Each entry is (version_number, sql). Migrations run in order and are skipped
 // if already recorded in schema_migrations. Each migration is atomic.
-const MIGRATIONS: &[(i64, &str)] = &[(1, MIGRATION_001), (2, MIGRATION_002), (3, MIGRATION_003)];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, MIGRATION_001),
+    (2, MIGRATION_002),
+    (3, MIGRATION_003),
+    (4, MIGRATION_004),
+];
 
 const MIGRATION_001: &str = "
     CREATE TABLE accounts (
@@ -81,6 +86,25 @@ const MIGRATION_003: &str = "
         transaction_id TEXT NOT NULL REFERENCES transactions(id),
         category_id    TEXT NOT NULL REFERENCES categories(id),
         amount_cents   INTEGER NOT NULL
+    );
+";
+
+const MIGRATION_004: &str = "
+    CREATE TABLE allocation_events (
+        id                       TEXT NOT NULL PRIMARY KEY,
+        category_id              TEXT NOT NULL REFERENCES categories(id),
+        month                    TEXT NOT NULL,
+        amount_cents             INTEGER NOT NULL,
+        kind                     TEXT NOT NULL,
+        counterpart_category_id  TEXT REFERENCES categories(id),
+        group_id                 TEXT,
+        note                     TEXT,
+        created_at               TEXT NOT NULL
+    );
+
+    CREATE TABLE monthly_targets (
+        month        TEXT NOT NULL PRIMARY KEY,
+        amount_cents INTEGER NOT NULL
     );
 ";
 
@@ -164,6 +188,24 @@ mod tests {
                 .unwrap()
                 > 0;
             assert!(exists, "table {table} should exist after migration 3");
+        }
+    }
+
+    #[test]
+    fn migration_004_creates_budget_tables() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for table in &["allocation_events", "monthly_targets"] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(exists, "table {table} should exist after migration 4");
         }
     }
 

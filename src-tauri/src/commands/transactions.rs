@@ -2,18 +2,24 @@ use std::sync::Mutex;
 use tauri::State;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/TransactionRow.ts")]
 pub struct TransactionRow {
     pub id: String,
     pub account_id: String,
     pub account_name: String,
     pub date: String,
+    // Tauri IPC JSON encodes i64 as a JS number; override bigint.
+    #[ts(type = "number")]
     pub amount_cents: i64,
     pub description: String,
     pub notes: String,
     pub tags: Vec<String>,
     pub reviewed: bool,
+    pub category_id: Option<String>,
+    pub category_name: Option<String>,
 }
 
 fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, String> {
@@ -24,7 +30,9 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
                     rr.date, rr.amount_cents, rr.description,
                     COALESCE(tm.notes, '') AS notes,
                     COALESCE(tm.tags, '[]') AS tags,
-                    COALESCE(tm.reviewed, 0) AS reviewed
+                    COALESCE(tm.reviewed, 0) AS reviewed,
+                    ca.category_id,
+                    cat.name AS category_name
              FROM transactions t
              JOIN accounts a ON t.account_id = a.id
              JOIN raw_records rr ON rr.transaction_id = t.id
@@ -32,6 +40,8 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
                    SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
                )
              LEFT JOIN transaction_meta tm ON tm.transaction_id = t.id
+             LEFT JOIN category_assignments ca ON ca.transaction_id = t.id
+             LEFT JOIN categories cat ON cat.id = ca.category_id
              ORDER BY rr.date DESC, t.created_at DESC",
         )
         .map_err(|e| e.to_string())?;
@@ -49,13 +59,15 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
                 row.get::<_, String>(6)?,
                 tags_json,
                 row.get::<_, i64>(8)?,
+                row.get::<_, Option<String>>(9)?,
+                row.get::<_, Option<String>>(10)?,
             ))
         })
         .map_err(|e| e.to_string())?;
 
     let mut result = Vec::new();
     for row in rows {
-        let (id, account_id, account_name, date, amount_cents, description, notes, tags_json, reviewed_int) =
+        let (id, account_id, account_name, date, amount_cents, description, notes, tags_json, reviewed_int, category_id, category_name) =
             row.map_err(|e| e.to_string())?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         result.push(TransactionRow {
@@ -68,6 +80,8 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
             notes,
             tags,
             reviewed: reviewed_int != 0,
+            category_id,
+            category_name,
         });
     }
 
@@ -175,6 +189,33 @@ mod tests {
         assert_eq!(rows[0].notes, "");
         assert!(rows[0].tags.is_empty());
         assert!(!rows[0].reviewed);
+        assert!(rows[0].category_id.is_none());
+        assert!(rows[0].category_name.is_none());
+    }
+
+    #[test]
+    fn list_returns_category_when_assigned() {
+        let conn = setup();
+        let account_id = insert_account(&conn);
+        let tx_id = insert_transaction_with_record(&conn, &account_id, "2026-01-15", -1000, "Trader Joe's");
+
+        let cat_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO categories (id, name, kind, created_at) VALUES (?1, 'Groceries', 'flow', datetime('now'))",
+            rusqlite::params![cat_id],
+        )
+        .unwrap();
+        let assign_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO category_assignments (id, transaction_id, category_id, amount_cents) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![assign_id, tx_id, cat_id, -1000_i64],
+        )
+        .unwrap();
+
+        let rows = list_transactions_inner(&conn).unwrap();
+        let row = rows.iter().find(|r| r.id == tx_id).unwrap();
+        assert_eq!(row.category_id.as_deref(), Some(cat_id.as_str()));
+        assert_eq!(row.category_name.as_deref(), Some("Groceries"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { listTransactions } from '$lib/transactions';
   import { formatCents } from '$lib/money';
-  import type { TransactionRow } from '$lib/types/transaction';
+  import type { TransactionRow } from '$lib/generated/TransactionRow';
   import TransactionDetail from '$lib/components/TransactionDetail.svelte';
   import { ArrowLeftRight } from '@lucide/svelte';
 
@@ -41,6 +41,14 @@
       day: 'numeric',
     });
   }
+
+  function categoryLabel(name: string | null): string {
+    return name ?? 'Uncategorized';
+  }
+
+  function categoryAssigned(name: string | null): boolean {
+    return name !== null;
+  }
 </script>
 
 {#if selected}
@@ -74,7 +82,7 @@
     </div>
   {:else}
     <div class="table-wrap">
-      <table>
+      <table class="data-table">
         <thead>
           <tr>
             <th class="date-col">Date</th>
@@ -93,7 +101,9 @@
                 <span class="merchant-account">{tx.account_name}</span>
               </td>
               <td class="category-cell">
-                <span class="category-chip">Uncategorized</span>
+                <span class="category-chip" class:assigned={categoryAssigned(tx.category_name)}>
+                  {categoryLabel(tx.category_name)}
+                </span>
               </td>
               <td
                 class="amount"
@@ -203,17 +213,6 @@
     z-index: 1;
   }
 
-  th {
-    padding: 8px 12px;
-    text-align: left;
-    color: var(--muted-foreground);
-    font-weight: 500;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--border);
-  }
-
   td {
     padding: 10px 12px;
     border-bottom: 1px solid var(--border-subtle);
@@ -266,6 +265,11 @@
     background: var(--muted);
     color: var(--muted-foreground);
     padding: 2px 7px;
+  }
+
+  .category-chip.assigned {
+    background: var(--primary);
+    color: var(--primary-foreground);
   }
 
   .amount-col {

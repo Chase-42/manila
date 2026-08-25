@@ -72,7 +72,7 @@
     </div>
   {:else}
     <div class="table-wrap">
-      <table>
+      <table class="data-table">
         <thead>
           <tr>
             <th>Name</th>
@@ -156,17 +156,6 @@
     top: 0;
     background: var(--surface-raised);
     z-index: 1;
-  }
-
-  th {
-    padding: 8px 12px;
-    text-align: left;
-    color: var(--muted-foreground);
-    font-weight: 500;
-    font-size: 11px;
-    letter-spacing: 0.05em;
-    text-transform: uppercase;
-    border-bottom: 1px solid var(--border);
   }
 
   td {

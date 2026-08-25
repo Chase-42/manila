@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { TransactionRow } from '$lib/types/transaction';
+import type { TransactionRow } from '$lib/generated/TransactionRow';
 
 export async function listTransactions(): Promise<TransactionRow[]> {
   return invoke<TransactionRow[]>('list_transactions');

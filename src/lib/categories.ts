@@ -20,3 +20,10 @@ export async function updateCategory(
 ): Promise<void> {
   return invoke("update_category", { id, name });
 }
+
+export async function upsertCategoryAssignment(
+  transaction_id: string,
+  category_id: string | null,
+): Promise<void> {
+  return invoke("upsert_category_assignment", { transaction_id, category_id });
+}

@@ -4,7 +4,7 @@
   import { listTransactions } from '$lib/transactions';
   import { formatCents } from '$lib/money';
   import type { Account } from '$lib/types/account';
-  import type { TransactionRow } from '$lib/types/transaction';
+  import type { TransactionRow } from '$lib/generated/TransactionRow';
   import { Wallet } from '@lucide/svelte';
 
   const now = new Date();

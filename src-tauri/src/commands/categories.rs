@@ -83,11 +83,83 @@ pub fn update_category(
     Ok(())
 }
 
+fn upsert_category_assignment_inner(
+    conn: &Connection,
+    transaction_id: &str,
+    category_id: Option<&str>,
+) -> Result<(), String> {
+    conn.execute(
+        "DELETE FROM category_assignments WHERE transaction_id = ?1",
+        rusqlite::params![transaction_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    if let Some(cat_id) = category_id {
+        // Look up the current raw amount from the unsuperseded record.
+        let amount_cents: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM raw_records
+                 WHERE transaction_id = ?1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = raw_records.id
+                   )",
+                rusqlite::params![transaction_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO category_assignments (id, transaction_id, category_id, amount_cents)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, transaction_id, cat_id, amount_cents],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn upsert_category_assignment(
+    db: State<'_, Mutex<Connection>>,
+    transaction_id: String,
+    category_id: Option<String>,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    upsert_category_assignment_inner(&conn, &transaction_id, category_id.as_deref())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::{db::open_connection, migrations::run_migrations, seed::seed_categories};
     use std::sync::Mutex;
+
+    fn insert_transaction_with_record(conn: &Connection, amount_cents: i64) -> String {
+        let account_id = Uuid::new_v4().to_string();
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES (?1, 'Bank', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id, date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, '2026-01-01', ?4, 'Test', '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("src|{}", rr_id), amount_cents],
+        )
+        .unwrap();
+        tx_id
+    }
 
     fn test_db() -> Mutex<Connection> {
         let mut conn = open_connection(":memory:").unwrap();
@@ -194,5 +266,95 @@ mod tests {
             )
             .unwrap();
         assert_eq!(kind, original_kind);
+    }
+
+    #[test]
+    fn upsert_assignment_inserts_row() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_record(&conn, -1500);
+        let cat_id: String = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        upsert_category_assignment_inner(&conn, &tx_id, Some(&cat_id)).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let (stored_cat, stored_amount): (String, i64) = conn
+            .query_row(
+                "SELECT category_id, amount_cents FROM category_assignments WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(stored_cat, cat_id);
+        assert_eq!(stored_amount, -1500);
+    }
+
+    #[test]
+    fn upsert_assignment_replaces_existing() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_record(&conn, -2000);
+        let mut cat_iter = conn
+            .prepare("SELECT id FROM categories LIMIT 2")
+            .unwrap();
+        let cats: Vec<String> = cat_iter
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let (cat_a, cat_b) = (&cats[0], &cats[1]);
+
+        upsert_category_assignment_inner(&conn, &tx_id, Some(cat_a)).unwrap();
+        upsert_category_assignment_inner(&conn, &tx_id, Some(cat_b)).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        let stored_cat: String = conn
+            .query_row(
+                "SELECT category_id FROM category_assignments WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(&stored_cat, cat_b);
+    }
+
+    #[test]
+    fn upsert_assignment_none_clears() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_record(&conn, -500);
+        let cat_id: String = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        upsert_category_assignment_inner(&conn, &tx_id, Some(&cat_id)).unwrap();
+        upsert_category_assignment_inner(&conn, &tx_id, None).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }

@@ -2,9 +2,14 @@
 import type { BudgetCategoryRow } from "./BudgetCategoryRow";
 import type { BudgetGroupView } from "./BudgetGroupView";
 import type { IncomeCategoryRow } from "./IncomeCategoryRow";
+import type { ReallocationEntry } from "./ReallocationEntry";
 
 export type BudgetMonthView = { month: string, 
 /**
  * SUM(income splits for month) - SUM(allocation_events for month)
  */
-left_to_allocate_cents: number, income_rows: Array<IncomeCategoryRow>, flow_groups: Array<BudgetGroupView>, flow_ungrouped: Array<BudgetCategoryRow>, sinking_groups: Array<BudgetGroupView>, sinking_ungrouped: Array<BudgetCategoryRow>, };
+left_to_allocate_cents: number, income_rows: Array<IncomeCategoryRow>, flow_groups: Array<BudgetGroupView>, flow_ungrouped: Array<BudgetCategoryRow>, sinking_groups: Array<BudgetGroupView>, sinking_ungrouped: Array<BudgetCategoryRow>, 
+/**
+ * reallocation pairs for this month, newest first; one entry per pair (source side)
+ */
+reallocation_log: Array<ReallocationEntry>, };

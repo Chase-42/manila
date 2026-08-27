@@ -24,7 +24,7 @@ export async function assignCategoryToGroup(
   groupId: string | null,
 ): Promise<void> {
   return invoke("assign_category_to_group", {
-    category_id: categoryId,
-    group_id: groupId,
+    categoryId,
+    groupId,
   });
 }

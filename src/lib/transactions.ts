@@ -6,10 +6,10 @@ export async function listTransactions(): Promise<TransactionRow[]> {
 }
 
 export async function upsertTransactionMeta(
-  transaction_id: string,
+  transactionId: string,
   notes: string,
   tags: string[],
   reviewed: boolean
 ): Promise<void> {
-  return invoke('upsert_transaction_meta', { transaction_id, notes, tags, reviewed });
+  return invoke('upsert_transaction_meta', { transactionId, notes, tags, reviewed });
 }

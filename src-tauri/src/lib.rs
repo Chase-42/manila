@@ -40,6 +40,7 @@ pub fn run() {
             commands::groups::assign_category_to_group,
             commands::budget::get_budget_month,
             commands::budget::set_allocation,
+            commands::budget::reallocate,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

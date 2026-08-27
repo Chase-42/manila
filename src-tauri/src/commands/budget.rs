@@ -49,6 +49,21 @@ pub struct BudgetGroupView {
 }
 
 #[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/ReallocationEntry.ts")]
+pub struct ReallocationEntry {
+    /// ID of the negative (source) allocation_event row
+    pub id: String,
+    pub from_category_id: String,
+    pub from_name: String,
+    pub to_category_id: String,
+    pub to_name: String,
+    /// absolute value of the moved amount
+    #[ts(type = "number")]
+    pub amount_cents: i64,
+    pub created_at: String,
+}
+
+#[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/BudgetMonthView.ts")]
 pub struct BudgetMonthView {
     pub month: String,
@@ -60,6 +75,8 @@ pub struct BudgetMonthView {
     pub flow_ungrouped: Vec<BudgetCategoryRow>,
     pub sinking_groups: Vec<BudgetGroupView>,
     pub sinking_ungrouped: Vec<BudgetCategoryRow>,
+    /// reallocation pairs for this month, newest first; one entry per pair (source side)
+    pub reallocation_log: Vec<ReallocationEntry>,
 }
 
 struct RawBudgetRow {
@@ -250,6 +267,37 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
 
     let left_to_allocate_cents = total_income_cents - total_month_allocated;
 
+    // Query only the negative-amount side of each reallocate pair to avoid duplicates.
+    let mut realloc_stmt = conn
+        .prepare(
+            "SELECT ae.id, ae.category_id, from_c.name, ae.counterpart_category_id, to_c.name,
+                    ABS(ae.amount_cents), ae.created_at
+             FROM allocation_events ae
+             JOIN categories from_c ON from_c.id = ae.category_id
+             JOIN categories to_c   ON to_c.id   = ae.counterpart_category_id
+             WHERE ae.month = ?1
+               AND ae.kind = 'reallocate'
+               AND ae.amount_cents < 0
+             ORDER BY ae.created_at DESC",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let reallocation_log: Vec<ReallocationEntry> = realloc_stmt
+        .query_map(rusqlite::params![month], |row| {
+            Ok(ReallocationEntry {
+                id: row.get(0)?,
+                from_category_id: row.get(1)?,
+                from_name: row.get(2)?,
+                to_category_id: row.get(3)?,
+                to_name: row.get(4)?,
+                amount_cents: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
     Ok(BudgetMonthView {
         month: month.to_owned(),
         left_to_allocate_cents,
@@ -258,6 +306,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
         flow_ungrouped,
         sinking_groups,
         sinking_ungrouped,
+        reallocation_log,
     })
 }
 
@@ -303,6 +352,54 @@ fn set_allocation_inner(
              (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
          VALUES (?1, ?2, ?3, ?4, 'allocate', NULL, NULL, NULL, ?5)",
         rusqlite::params![id, category_id, month, delta, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reallocate(
+    db: State<'_, Mutex<Connection>>,
+    from_category_id: String,
+    to_category_id: String,
+    month: String,
+    amount_cents: i64,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    reallocate_inner(&conn, &from_category_id, &to_category_id, &month, amount_cents)
+}
+
+fn reallocate_inner(
+    conn: &Connection,
+    from_category_id: &str,
+    to_category_id: &str,
+    month: &str,
+    amount_cents: i64,
+) -> Result<(), String> {
+    if amount_cents <= 0 {
+        return Err("Reallocation amount must be positive".into());
+    }
+    if from_category_id == to_category_id {
+        return Err("Source and destination must be different categories".into());
+    }
+    let now = Utc::now().to_rfc3339();
+    let from_id = Uuid::new_v4().to_string();
+    let to_id = Uuid::new_v4().to_string();
+
+    conn.execute(
+        "INSERT INTO allocation_events
+             (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, NULL, ?6)",
+        rusqlite::params![from_id, from_category_id, month, -amount_cents, to_category_id, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "INSERT INTO allocation_events
+             (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, NULL, ?6)",
+        rusqlite::params![to_id, to_category_id, month, amount_cents, from_category_id, now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -615,5 +712,170 @@ mod tests {
                 g.group_name
             );
         }
+    }
+
+    fn second_category_id(conn: &Connection, kind: &str) -> String {
+        conn.query_row(
+            "SELECT id FROM categories WHERE kind = ?1 LIMIT 1 OFFSET 1",
+            rusqlite::params![kind],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn reallocate_inserts_two_paired_rows() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 5_000).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM allocation_events WHERE kind = 'reallocate'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+
+        let from_amount: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM allocation_events WHERE category_id = ?1 AND kind = 'reallocate'",
+                rusqlite::params![from_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(from_amount, -5_000);
+
+        let to_amount: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM allocation_events WHERE category_id = ?1 AND kind = 'reallocate'",
+                rusqlite::params![to_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(to_amount, 5_000);
+    }
+
+    #[test]
+    fn reallocate_sets_counterpart_category_id() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 3_000).unwrap();
+
+        let counterpart_on_from: String = conn
+            .query_row(
+                "SELECT counterpart_category_id FROM allocation_events WHERE category_id = ?1 AND kind = 'reallocate'",
+                rusqlite::params![from_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(counterpart_on_from, to_id);
+
+        let counterpart_on_to: String = conn
+            .query_row(
+                "SELECT counterpart_category_id FROM allocation_events WHERE category_id = ?1 AND kind = 'reallocate'",
+                rusqlite::params![to_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(counterpart_on_to, from_id);
+    }
+
+    #[test]
+    fn reallocate_rejects_same_category() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        let result = reallocate_inner(&conn, &cat_id, &cat_id, "2026-08", 1_000);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reallocate_rejects_zero_amount() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", 0);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reallocate_rejects_negative_amount() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", -500);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn reallocation_log_empty_when_no_reallocations() {
+        let conn = test_db();
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert!(view.reallocation_log.is_empty());
+    }
+
+    #[test]
+    fn reallocation_log_has_one_entry_per_pair() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 7_500).unwrap();
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert_eq!(view.reallocation_log.len(), 1);
+        let entry = &view.reallocation_log[0];
+        assert_eq!(entry.from_category_id, from_id);
+        assert_eq!(entry.to_category_id, to_id);
+        assert_eq!(entry.amount_cents, 7_500);
+    }
+
+    #[test]
+    fn reallocation_log_names_match_category_names() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 1_000).unwrap();
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let entry = &view.reallocation_log[0];
+        assert!(!entry.from_name.is_empty(), "from_name must be populated");
+        assert!(!entry.to_name.is_empty(), "to_name must be populated");
+    }
+
+    #[test]
+    fn reallocation_log_scoped_to_month() {
+        let conn = test_db();
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+        reallocate_inner(&conn, &from_id, &to_id, "2026-07", 1_000).unwrap();
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert!(
+            view.reallocation_log.is_empty(),
+            "reallocation in July must not appear in August log"
+        );
+    }
+
+    #[test]
+    fn reallocate_is_net_zero_for_left_to_allocate() {
+        let conn = test_db();
+        let income_id = first_income_category_id(&conn);
+        insert_income_split(&conn, &income_id, 500_000, "2026-08-01");
+        let from_id = first_category_id(&conn, "flow");
+        let to_id = second_category_id(&conn, "flow");
+
+        set_allocation_inner(&conn, &from_id, "2026-08", 200_000).unwrap();
+        let view_before = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let lta_before = view_before.left_to_allocate_cents;
+
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 50_000).unwrap();
+        let view_after = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert_eq!(
+            view_after.left_to_allocate_cents, lta_before,
+            "left_to_allocate must be unchanged by a reallocation"
+        );
     }
 }

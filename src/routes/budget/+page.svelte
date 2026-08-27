@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ChevronRight, ChevronDown } from '@lucide/svelte';
+  import { ChevronRight, ChevronDown, ArrowLeftRight } from '@lucide/svelte';
   import { getBudgetMonth, setAllocation } from '$lib/budget';
   import { formatCents } from '$lib/money';
   import type { BudgetMonthView, BudgetGroupView, BudgetCategoryRow } from '$lib/budget';
+  import ReallocateDialog from '$lib/components/ReallocateDialog.svelte';
 
   const today = new Date();
   const CURRENT_MONTH = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}`;
@@ -13,6 +14,10 @@
   let loading = $state(false);
   let allocationInputs = $state<Record<string, string>>({});
   let collapsedGroups = $state(new Set<string>());
+
+  let reallocOpen = $state(false);
+  let reallocInitialFrom = $state<string | undefined>(undefined);
+  let reallocInitialTo = $state<string | undefined>(undefined);
 
   function toMonthLabel(m: string): string {
     const [y, mo] = m.split('-').map(Number);
@@ -76,6 +81,18 @@
     if (e.key === 'Enter') (e.currentTarget as HTMLElement).blur();
   }
 
+  function openReallocFrom(categoryId: string) {
+    reallocInitialFrom = categoryId;
+    reallocInitialTo = undefined;
+    reallocOpen = true;
+  }
+
+  function openReallocTo(categoryId: string) {
+    reallocInitialFrom = undefined;
+    reallocInitialTo = categoryId;
+    reallocOpen = true;
+  }
+
   let totalIncome = $derived(view?.income_rows.reduce((s, r) => s + r.actual_cents, 0) ?? 0);
 
   let totalSpent = $derived(
@@ -86,6 +103,13 @@
   );
 
   let sinkingAll = $derived([
+    ...(view?.sinking_groups.flatMap(g => g.categories) ?? []),
+    ...(view?.sinking_ungrouped ?? []),
+  ]);
+
+  let allExpenseCategories = $derived([
+    ...(view?.flow_groups.flatMap(g => g.categories) ?? []),
+    ...(view?.flow_ungrouped ?? []),
     ...(view?.sinking_groups.flatMap(g => g.categories) ?? []),
     ...(view?.sinking_ungrouped ?? []),
   ]);
@@ -109,9 +133,17 @@
       aria-label={`Budget for ${cat.category_name}`}
     />
     <span class="mono-cell">{formatCents(cat.spent_cents)}</span>
-    <span class="mono-cell" class:positive={remaining >= 0} class:negative={remaining < 0}>
-      {formatCents(remaining)}
-    </span>
+    <div class="remaining-cell">
+      <span class="mono-cell" class:positive={remaining >= 0} class:negative={remaining < 0}>
+        {formatCents(remaining)}
+      </span>
+      {#if cat.kind === 'flow' && remaining < 0}
+        <button class="cover-btn" onclick={() => openReallocTo(cat.category_id)} title="Cover overspend">Cover?</button>
+      {/if}
+    </div>
+    <button class="move-btn" onclick={() => openReallocFrom(cat.category_id)} title="Move money from this category">
+      <ArrowLeftRight size={13} />
+    </button>
   </div>
 {/snippet}
 
@@ -128,6 +160,7 @@
       <span class="mono-cell" class:positive={group.remaining_cents >= 0} class:negative={group.remaining_cents < 0}>
         {formatCents(group.remaining_cents)}
       </span>
+      <span></span>
     </button>
     {#if !collapsed}
       {#each group.categories as cat (cat.category_id)}
@@ -153,6 +186,9 @@
       onkeydown={onKey}
       aria-label={`Monthly contribution for ${cat.category_name}`}
     />
+    <button class="move-btn move-btn-sinking" onclick={() => openReallocFrom(cat.category_id)} title="Move money from this category">
+      <ArrowLeftRight size={13} />
+    </button>
   </div>
 {/snippet}
 
@@ -178,6 +214,7 @@
       <span class="col-label-right">Budget</span>
       <span class="col-label-right">Actual</span>
       <span class="col-label-right">Remaining</span>
+      <span></span>
     </div>
     {#each view!.flow_groups as group (group.group_id)}
       {@render expenseGroupBlock(group)}
@@ -186,7 +223,7 @@
       <div class="group-block">
         <div class="expense-row group-ungrouped">
           <span class="group-label-plain">Other</span>
-          <span></span><span></span><span></span>
+          <span></span><span></span><span></span><span></span>
         </div>
         {#each view!.flow_ungrouped as cat (cat.category_id)}
           {@render expenseCatRow(cat)}
@@ -202,11 +239,28 @@
       <span class="section-label">Sinking Funds</span>
       <span class="col-label-right">Balance</span>
       <span class="col-label-right">+/mo</span>
+      <span></span>
     </div>
     {#each sinkingAll as cat (cat.category_id)}
       {@render sinkingCatRow(cat)}
     {/each}
   </section>
+{/snippet}
+
+{#snippet reallocationLogSection()}
+  {#if view!.reallocation_log.length > 0}
+    <section class="section">
+      <div class="col-header realloc-log-header">
+        <span class="section-label">Reallocations this month</span>
+      </div>
+      {#each view!.reallocation_log as entry (entry.id)}
+        <div class="realloc-log-row">
+          <span class="realloc-names">{entry.from_name} → {entry.to_name}</span>
+          <span class="mono-cell">{formatCents(entry.amount_cents)}</span>
+        </div>
+      {/each}
+    </section>
+  {/if}
 {/snippet}
 
 {#snippet sidebarContent()}
@@ -254,6 +308,7 @@
         {#if view.income_rows.length > 0}{@render incomeSection()}{/if}
         {#if view.flow_groups.length > 0 || view.flow_ungrouped.length > 0}{@render expenseSection()}{/if}
         {#if sinkingAll.length > 0}{@render sinkingSection()}{/if}
+        {@render reallocationLogSection()}
       </main>
       <aside class="sidebar">
         {@render sidebarContent()}
@@ -261,6 +316,15 @@
     </div>
   {/if}
 </div>
+
+<ReallocateDialog
+  bind:open={reallocOpen}
+  categories={allExpenseCategories}
+  initialFrom={reallocInitialFrom}
+  initialTo={reallocInitialTo}
+  month={selectedMonth}
+  onsuccess={() => { void load(); }}
+/>
 
 <style>
   .page {
@@ -364,7 +428,7 @@
   .expense-grid,
   .expense-row {
     display: grid;
-    grid-template-columns: 1fr 88px 72px 88px;
+    grid-template-columns: 1fr 88px 72px 88px 28px;
     align-items: center;
     gap: 4px;
   }
@@ -372,7 +436,7 @@
   .sinking-grid,
   .sinking-row {
     display: grid;
-    grid-template-columns: 1fr 88px 80px;
+    grid-template-columns: 1fr 88px 80px 28px;
     align-items: center;
     gap: 4px;
   }
@@ -435,6 +499,58 @@
   .mono-cell.negative { color: var(--destructive); }
   .mono-cell.muted { color: var(--muted-foreground); }
 
+  /* Remaining cell: amount + optional Cover? */
+
+  .remaining-cell {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+
+  /* Cover? affordance for overspent flow categories */
+
+  .cover-btn {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--destructive);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    white-space: nowrap;
+    opacity: 0.7;
+    transition: opacity 0.12s;
+  }
+
+  .cover-btn:hover { opacity: 1; }
+
+  /* Move button (ArrowLeftRight icon) */
+
+  .move-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    color: var(--muted-foreground);
+    padding: 0;
+    opacity: 0;
+    transition: opacity 0.12s, color 0.12s;
+  }
+
+  .move-btn-sinking {
+    opacity: 0;
+  }
+
+  .expense-row:hover .move-btn,
+  .sinking-row:hover .move-btn {
+    opacity: 1;
+  }
+
+  .move-btn:hover { color: var(--foreground); }
+
   /* Allocation input */
 
   .alloc-input {
@@ -489,6 +605,28 @@
   }
 
   .group-ungrouped { padding: 6px 0 2px; }
+
+  /* Reallocation log */
+
+  .realloc-log-header {
+    display: block;
+  }
+
+  .realloc-log-row {
+    display: grid;
+    grid-template-columns: 1fr 88px;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 0;
+  }
+
+  .realloc-names {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   /* Sidebar */
 

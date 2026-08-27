@@ -22,9 +22,9 @@ export async function updateCategory(
 }
 
 export async function upsertSplit(
-  transaction_id: string,
-  target_type: string,
-  target_id: string,
+  transactionId: string,
+  targetType: string,
+  targetId: string,
 ): Promise<void> {
-  return invoke("upsert_split", { transaction_id, target_type, target_id });
+  return invoke("upsert_split", { transactionId, targetType, targetId });
 }

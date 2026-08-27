@@ -5,6 +5,7 @@ export type { BudgetMonthView };
 export type { BudgetCategoryRow } from "./generated/BudgetCategoryRow";
 export type { BudgetGroupView } from "./generated/BudgetGroupView";
 export type { IncomeCategoryRow } from "./generated/IncomeCategoryRow";
+export type { ReallocationEntry } from "./generated/ReallocationEntry";
 
 export async function getBudgetMonth(month: string): Promise<BudgetMonthView> {
   return invoke("get_budget_month", { month });
@@ -16,9 +17,40 @@ export async function setAllocation(
   newAmountCents: number,
 ): Promise<void> {
   return invoke("set_allocation", {
-    category_id: categoryId,
+    categoryId,
     month,
-    new_amount_cents: newAmountCents,
+    newAmountCents,
   });
+}
+
+export async function reallocate(
+  fromCategoryId: string,
+  toCategoryId: string,
+  month: string,
+  amountCents: number,
+): Promise<void> {
+  return invoke("reallocate", {
+    fromCategoryId,
+    toCategoryId,
+    month,
+    amountCents,
+  });
+}
+
+export function parseCentsFromString(val: string): number {
+  const n = parseFloat(val);
+  return isNaN(n) ? 0 : Math.round(n * 100);
+}
+
+export function validateReallocation(
+  fromId: string,
+  toId: string,
+  amountStr: string,
+): string | null {
+  if (parseCentsFromString(amountStr) <= 0) return "Amount must be greater than zero.";
+  if (!fromId) return "Select a source category.";
+  if (!toId) return "Select a destination category.";
+  if (fromId === toId) return "Source and destination must be different.";
+  return null;
 }
 

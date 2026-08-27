@@ -18,14 +18,10 @@ pub struct CategoryRow {
 }
 
 #[tauri::command]
-pub fn list_categories(
-    db: State<'_, Mutex<Connection>>,
-) -> Result<Vec<CategoryRow>, String> {
+pub fn list_categories(db: State<'_, Mutex<Connection>>) -> Result<Vec<CategoryRow>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare(
-            "SELECT id, name, kind, group_id, created_at FROM categories ORDER BY kind, name",
-        )
+        .prepare("SELECT id, name, kind, group_id, created_at FROM categories ORDER BY kind, name")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -275,9 +271,7 @@ mod tests {
     fn list_returns_seeded_categories() {
         let db = test_db();
         let conn = db.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT COUNT(*) FROM categories")
-            .unwrap();
+        let mut stmt = conn.prepare("SELECT COUNT(*) FROM categories").unwrap();
         let count: i64 = stmt.query_row([], |r| r.get(0)).unwrap();
         assert_eq!(count, 16);
     }
@@ -407,9 +401,7 @@ mod tests {
         let db = test_db();
         let conn = db.lock().unwrap();
         let tx_id = insert_transaction_with_record(&conn, -2000);
-        let mut cat_iter = conn
-            .prepare("SELECT id FROM categories LIMIT 2")
-            .unwrap();
+        let mut cat_iter = conn.prepare("SELECT id FROM categories LIMIT 2").unwrap();
         let cats: Vec<String> = cat_iter
             .query_map([], |r| r.get(0))
             .unwrap()

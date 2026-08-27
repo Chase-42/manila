@@ -16,6 +16,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,
+            commands::ledger::create_transfer,
             commands::accounts::list_accounts,
             commands::accounts::create_account,
             commands::accounts::update_account,

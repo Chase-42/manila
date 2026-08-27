@@ -12,6 +12,7 @@
   let dbReady = $state(false);
 
   onMount(async () => {
+    // wdio/tauri-plugin must be registered in the WebView for E2E tests; DEV guard keeps it out of prod
     if (import.meta.env.DEV) {
       await import('@wdio/tauri-plugin');
     }

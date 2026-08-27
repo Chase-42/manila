@@ -1,7 +1,7 @@
-use std::sync::Mutex;
-use tauri::State;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use tauri::State;
 use ts_rs::TS;
 
 #[derive(Debug, Serialize, TS)]
@@ -71,8 +71,20 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
 
     let mut result = Vec::new();
     for row in rows {
-        let (id, account_id, account_name, date, amount_cents, description, notes, tags_json, reviewed_int, category_type, category_id, category_name) =
-            row.map_err(|e| e.to_string())?;
+        let (
+            id,
+            account_id,
+            account_name,
+            date,
+            amount_cents,
+            description,
+            notes,
+            tags_json,
+            reviewed_int,
+            category_type,
+            category_id,
+            category_name,
+        ) = row.map_err(|e| e.to_string())?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         result.push(TransactionRow {
             id,
@@ -137,7 +149,12 @@ pub fn upsert_transaction_meta(
     let conn = db.lock().map_err(|e| e.to_string())?;
     upsert_transaction_meta_inner(
         &conn,
-        &UpsertMetaArgs { transaction_id, notes, tags, reviewed },
+        &UpsertMetaArgs {
+            transaction_id,
+            notes,
+            tags,
+            reviewed,
+        },
     )
 }
 
@@ -165,7 +182,13 @@ mod tests {
         id
     }
 
-    fn insert_transaction_with_record(conn: &Connection, account_id: &str, date: &str, amount_cents: i64, description: &str) -> String {
+    fn insert_transaction_with_record(
+        conn: &Connection,
+        account_id: &str,
+        date: &str,
+        amount_cents: i64,
+        description: &str,
+    ) -> String {
         let tx_id = Uuid::new_v4().to_string();
         let rr_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -202,7 +225,8 @@ mod tests {
     fn list_returns_category_when_assigned() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let tx_id = insert_transaction_with_record(&conn, &account_id, "2026-01-15", -1000, "Trader Joe's");
+        let tx_id =
+            insert_transaction_with_record(&conn, &account_id, "2026-01-15", -1000, "Trader Joe's");
 
         let cat_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -228,7 +252,8 @@ mod tests {
     fn list_returns_category_type_when_income_split_assigned() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let tx_id = insert_transaction_with_record(&conn, &account_id, "2026-01-15", 4800_00, "Paycheck");
+        let tx_id =
+            insert_transaction_with_record(&conn, &account_id, "2026-01-15", 480_000, "Paycheck");
 
         let ic_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -239,7 +264,7 @@ mod tests {
         let split_id = Uuid::new_v4().to_string();
         conn.execute(
             "INSERT INTO splits (id, transaction_id, target_type, target_id, amount_cents) VALUES (?1, ?2, 'income', ?3, ?4)",
-            rusqlite::params![split_id, tx_id, ic_id, 4800_00_i64],
+            rusqlite::params![split_id, tx_id, ic_id, 480_000_i64],
         )
         .unwrap();
 
@@ -323,7 +348,11 @@ mod tests {
         assert!(row.reviewed);
 
         let meta_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transaction_meta WHERE transaction_id = ?1", rusqlite::params![tx_id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM transaction_meta WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(meta_count, 1);
     }
@@ -332,7 +361,8 @@ mod tests {
     fn list_returns_updated_meta() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let tx_id = insert_transaction_with_record(&conn, &account_id, "2026-02-14", -3000, "Dinner");
+        let tx_id =
+            insert_transaction_with_record(&conn, &account_id, "2026-02-14", -3000, "Dinner");
 
         let before = list_transactions_inner(&conn).unwrap();
         assert_eq!(before[0].notes, "");

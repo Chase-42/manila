@@ -170,7 +170,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
         match row.kind.as_str() {
             "flow" => match row.group_id {
                 Some(gid) => {
-                    if flow_groups.last().map_or(true, |g| g.group_id != gid) {
+                    if flow_groups.last().is_none_or(|g| g.group_id != gid) {
                         flow_groups.push(BudgetGroupView {
                             group_id: gid,
                             group_name: row.group_name.unwrap_or_default(),
@@ -188,7 +188,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
             },
             "sinking" => match row.group_id {
                 Some(gid) => {
-                    if sinking_groups.last().map_or(true, |g| g.group_id != gid) {
+                    if sinking_groups.last().is_none_or(|g| g.group_id != gid) {
                         sinking_groups.push(BudgetGroupView {
                             group_id: gid,
                             group_name: row.group_name.unwrap_or_default(),
@@ -349,8 +349,8 @@ fn set_allocation_inner(
     let now = Utc::now().to_rfc3339();
     conn.execute(
         "INSERT INTO allocation_events
-             (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, 'allocate', NULL, NULL, NULL, ?5)",
+             (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'allocate', NULL, NULL, ?5)",
         rusqlite::params![id, category_id, month, delta, now],
     )
     .map_err(|e| e.to_string())?;
@@ -367,7 +367,13 @@ pub fn reallocate(
     amount_cents: i64,
 ) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
-    reallocate_inner(&conn, &from_category_id, &to_category_id, &month, amount_cents)
+    reallocate_inner(
+        &conn,
+        &from_category_id,
+        &to_category_id,
+        &month,
+        amount_cents,
+    )
 }
 
 fn reallocate_inner(
@@ -389,17 +395,31 @@ fn reallocate_inner(
 
     conn.execute(
         "INSERT INTO allocation_events
-             (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, NULL, ?6)",
-        rusqlite::params![from_id, from_category_id, month, -amount_cents, to_category_id, now],
+             (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, ?6)",
+        rusqlite::params![
+            from_id,
+            from_category_id,
+            month,
+            -amount_cents,
+            to_category_id,
+            now
+        ],
     )
     .map_err(|e| e.to_string())?;
 
     conn.execute(
         "INSERT INTO allocation_events
-             (id, category_id, month, amount_cents, kind, counterpart_category_id, group_id, note, created_at)
-         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, NULL, ?6)",
-        rusqlite::params![to_id, to_category_id, month, amount_cents, from_category_id, now],
+             (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
+         VALUES (?1, ?2, ?3, ?4, 'reallocate', ?5, NULL, ?6)",
+        rusqlite::params![
+            to_id,
+            to_category_id,
+            month,
+            amount_cents,
+            from_category_id,
+            now
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -595,8 +615,14 @@ mod tests {
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
 
         // All seeded categories are grouped; none should be in ungrouped.
-        assert!(view.flow_ungrouped.is_empty(), "all seeded flow categories should be grouped");
-        assert!(view.sinking_ungrouped.is_empty(), "all seeded sinking categories should be grouped");
+        assert!(
+            view.flow_ungrouped.is_empty(),
+            "all seeded flow categories should be grouped"
+        );
+        assert!(
+            view.sinking_ungrouped.is_empty(),
+            "all seeded sinking categories should be grouped"
+        );
 
         // flow_groups should contain only flow categories
         for g in &view.flow_groups {
@@ -642,14 +668,17 @@ mod tests {
         // Health group has only flow categories (Healthcare); it should appear in flow_groups
         // but NOT in sinking_groups.
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        let health_in_sinking = view
-            .sinking_groups
-            .iter()
-            .any(|g| g.group_name == "Health");
-        assert!(!health_in_sinking, "Health group should not appear in sinking_groups");
+        let health_in_sinking = view.sinking_groups.iter().any(|g| g.group_name == "Health");
+        assert!(
+            !health_in_sinking,
+            "Health group should not appear in sinking_groups"
+        );
         // Savings group has only sinking categories; it should not appear in flow_groups.
         let savings_in_flow = view.flow_groups.iter().any(|g| g.group_name == "Savings");
-        assert!(!savings_in_flow, "Savings group should not appear in flow_groups");
+        assert!(
+            !savings_in_flow,
+            "Savings group should not appear in flow_groups"
+        );
     }
 
     #[test]
@@ -659,7 +688,10 @@ mod tests {
         // 4 seeded income categories, none hidden
         assert_eq!(view.income_rows.len(), 4);
         for row in &view.income_rows {
-            assert_eq!(row.actual_cents, 0, "no splits yet so actual_cents should be 0");
+            assert_eq!(
+                row.actual_cents, 0,
+                "no splits yet so actual_cents should be 0"
+            );
         }
     }
 
@@ -670,7 +702,11 @@ mod tests {
         insert_income_split(&conn, &income_id, 480_000, "2026-08-15");
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        let row = view.income_rows.iter().find(|r| r.income_category_id == income_id).unwrap();
+        let row = view
+            .income_rows
+            .iter()
+            .find(|r| r.income_category_id == income_id)
+            .unwrap();
         assert_eq!(row.actual_cents, 480_000);
     }
 
@@ -681,8 +717,15 @@ mod tests {
         insert_income_split(&conn, &income_id, 480_000, "2026-07-31");
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        let row = view.income_rows.iter().find(|r| r.income_category_id == income_id).unwrap();
-        assert_eq!(row.actual_cents, 0, "split in prior month must not count toward August");
+        let row = view
+            .income_rows
+            .iter()
+            .find(|r| r.income_category_id == income_id)
+            .unwrap();
+        assert_eq!(
+            row.actual_cents, 0,
+            "split in prior month must not count toward August"
+        );
     }
 
     #[test]

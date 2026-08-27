@@ -1,7 +1,7 @@
-use std::sync::Mutex;
-use tauri::State;
 use rusqlite::Connection;
 use serde::Serialize;
+use std::sync::Mutex;
+use tauri::State;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
@@ -55,7 +55,14 @@ fn create_account_inner(
     conn.execute(
         "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, datetime('now'))",
-        rusqlite::params![id, name.trim(), account_type, subtype, institution, currency],
+        rusqlite::params![
+            id,
+            name.trim(),
+            account_type,
+            subtype,
+            institution,
+            currency
+        ],
     )
     .map_err(|e| e.to_string())?;
 
@@ -105,7 +112,14 @@ pub fn create_account(
     currency: String,
 ) -> Result<String, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
-    create_account_inner(&conn, &name, &account_type, &subtype, &institution, &currency)
+    create_account_inner(
+        &conn,
+        &name,
+        &account_type,
+        &subtype,
+        &institution,
+        &currency,
+    )
 }
 
 #[tauri::command]
@@ -152,9 +166,8 @@ mod tests {
     fn update_persists_changes() {
         let conn = setup();
 
-        let id =
-            create_account_inner(&conn, "Old Name", "depository", "checking", "Chase", "USD")
-                .unwrap();
+        let id = create_account_inner(&conn, "Old Name", "depository", "checking", "Chase", "USD")
+            .unwrap();
 
         update_account_inner(&conn, &id, "New Name", "credit", "credit card", "Amex").unwrap();
 
@@ -174,9 +187,8 @@ mod tests {
     #[test]
     fn blank_name_returns_err_on_update() {
         let conn = setup();
-        let id =
-            create_account_inner(&conn, "Checking", "depository", "checking", "Chase", "USD")
-                .unwrap();
+        let id = create_account_inner(&conn, "Checking", "depository", "checking", "Chase", "USD")
+            .unwrap();
         let result = update_account_inner(&conn, &id, "", "depository", "checking", "Chase");
         assert!(result.is_err());
     }

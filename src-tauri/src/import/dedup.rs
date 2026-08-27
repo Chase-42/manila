@@ -31,7 +31,10 @@ pub fn classify_candidates(
         .into_iter()
         .map(|c| {
             let class = classify_one(conn, account_id, &c);
-            ClassifiedRecord { candidate: c, class }
+            ClassifiedRecord {
+                candidate: c,
+                class,
+            }
         })
         .collect()
 }
@@ -61,7 +64,13 @@ fn classify_one(conn: &Connection, account_id: &str, c: &Candidate) -> DedupClas
              WHERE r.date = ?1 AND r.amount_cents = ?2 AND r.description = ?3
                AND t.account_id = ?4 AND r.source_id != ?5
              LIMIT 1",
-            rusqlite::params![c.date, c.amount_cents, c.description, account_id, c.source_id],
+            rusqlite::params![
+                c.date,
+                c.amount_cents,
+                c.description,
+                account_id,
+                c.source_id
+            ],
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
         )
         .ok();
@@ -88,7 +97,14 @@ mod tests {
         conn
     }
 
-    fn insert_record(conn: &Connection, account_id: &str, source_id: &str, date: &str, amount_cents: i64, description: &str) {
+    fn insert_record(
+        conn: &Connection,
+        account_id: &str,
+        source_id: &str,
+        date: &str,
+        amount_cents: i64,
+        description: &str,
+    ) {
         let tx_id = Uuid::new_v4().to_string();
         let rr_id = Uuid::new_v4().to_string();
         conn.execute(
@@ -102,7 +118,12 @@ mod tests {
         ).unwrap();
     }
 
-    fn make_candidate(source_id: &str, date: &str, amount_cents: i64, description: &str) -> Candidate {
+    fn make_candidate(
+        source_id: &str,
+        date: &str,
+        amount_cents: i64,
+        description: &str,
+    ) -> Candidate {
         Candidate {
             source_id: source_id.to_string(),
             date: date.to_string(),
@@ -122,7 +143,12 @@ mod tests {
     #[test]
     fn new_record_when_no_existing() {
         let conn = setup();
-        let candidates = vec![make_candidate("src-1", "2026-01-15", -4567, "Grocery Store")];
+        let candidates = vec![make_candidate(
+            "src-1",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
         let result = classify_candidates(&conn, "acct-1", candidates);
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0].class, DedupClass::New));
@@ -136,10 +162,23 @@ mod tests {
             "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
              VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
             rusqlite::params![account_id],
-        ).unwrap();
-        insert_record(&conn, &account_id, "src-abc", "2026-01-15", -4567, "Grocery Store");
+        )
+        .unwrap();
+        insert_record(
+            &conn,
+            &account_id,
+            "src-abc",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        );
 
-        let candidates = vec![make_candidate("src-abc", "2026-01-15", -4567, "Grocery Store")];
+        let candidates = vec![make_candidate(
+            "src-abc",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
         let result = classify_candidates(&conn, &account_id, candidates);
         assert!(matches!(result[0].class, DedupClass::Exact));
     }
@@ -152,13 +191,28 @@ mod tests {
             "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
              VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
             rusqlite::params![account_id],
-        ).unwrap();
-        insert_record(&conn, &account_id, "src-original", "2026-01-15", -4567, "Grocery Store");
+        )
+        .unwrap();
+        insert_record(
+            &conn,
+            &account_id,
+            "src-original",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        );
 
-        let candidates = vec![make_candidate("src-different", "2026-01-15", -4567, "Grocery Store")];
+        let candidates = vec![make_candidate(
+            "src-different",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
         let result = classify_candidates(&conn, &account_id, candidates);
         match &result[0].class {
-            DedupClass::Uncertain { existing_source_id, .. } => {
+            DedupClass::Uncertain {
+                existing_source_id, ..
+            } => {
                 assert_eq!(existing_source_id, "src-original");
             }
             _ => panic!("expected Uncertain"),
@@ -175,11 +229,24 @@ mod tests {
             "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
              VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
             rusqlite::params![account_id],
-        ).unwrap();
-        insert_record(&conn, &account_id, "src-abc", "2026-01-15", -4567, "Grocery Store");
+        )
+        .unwrap();
+        insert_record(
+            &conn,
+            &account_id,
+            "src-abc",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        );
 
         // Same source_id, same fields - should be Exact not Uncertain
-        let candidates = vec![make_candidate("src-abc", "2026-01-15", -4567, "Grocery Store")];
+        let candidates = vec![make_candidate(
+            "src-abc",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
         let result = classify_candidates(&conn, &account_id, candidates);
         assert!(matches!(result[0].class, DedupClass::Exact));
     }
@@ -195,12 +262,25 @@ mod tests {
                 "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
                  VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
                 rusqlite::params![id],
-            ).unwrap();
+            )
+            .unwrap();
         }
-        insert_record(&conn, &account_a, "src-a", "2026-01-15", -4567, "Grocery Store");
+        insert_record(
+            &conn,
+            &account_a,
+            "src-a",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        );
 
         // Importing the same transaction into account_b -> should be New
-        let candidates = vec![make_candidate("src-b", "2026-01-15", -4567, "Grocery Store")];
+        let candidates = vec![make_candidate(
+            "src-b",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
         let result = classify_candidates(&conn, &account_b, candidates);
         assert!(matches!(result[0].class, DedupClass::New));
     }
@@ -213,14 +293,29 @@ mod tests {
             "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
              VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
             rusqlite::params![account_id],
-        ).unwrap();
-        insert_record(&conn, &account_id, "src-exact", "2026-01-10", -1000, "Coffee");
-        insert_record(&conn, &account_id, "src-uncertain-orig", "2026-01-11", -2000, "Gas");
+        )
+        .unwrap();
+        insert_record(
+            &conn,
+            &account_id,
+            "src-exact",
+            "2026-01-10",
+            -1000,
+            "Coffee",
+        );
+        insert_record(
+            &conn,
+            &account_id,
+            "src-uncertain-orig",
+            "2026-01-11",
+            -2000,
+            "Gas",
+        );
 
         let candidates = vec![
-            make_candidate("src-exact", "2026-01-10", -1000, "Coffee"),          // Exact
-            make_candidate("src-uncertain-new", "2026-01-11", -2000, "Gas"),     // Uncertain
-            make_candidate("src-brand-new", "2026-01-12", -3000, "Restaurant"),  // New
+            make_candidate("src-exact", "2026-01-10", -1000, "Coffee"), // Exact
+            make_candidate("src-uncertain-new", "2026-01-11", -2000, "Gas"), // Uncertain
+            make_candidate("src-brand-new", "2026-01-12", -3000, "Restaurant"), // New
         ];
         let result = classify_candidates(&conn, &account_id, candidates);
         assert!(matches!(result[0].class, DedupClass::Exact));

@@ -1,7 +1,7 @@
-use std::sync::Mutex;
-use tauri::State;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::sync::Mutex;
+use tauri::State;
 use uuid::Uuid;
 
 use crate::import::csv::{self, ColumnMapping, CsvPreview};
@@ -42,7 +42,10 @@ pub struct ImportDecision {
 }
 
 fn csv_source_id(account_id: &str, date: &str, amount_cents: i64, description: &str) -> String {
-    format!("csv|{}|{}|{}|{}", account_id, date, amount_cents, description)
+    format!(
+        "csv|{}|{}|{}|{}",
+        account_id, date, amount_cents, description
+    )
 }
 
 fn build_pending_import(
@@ -61,7 +64,10 @@ fn build_pending_import(
         match record.class {
             dedup::DedupClass::New => new_count += 1,
             dedup::DedupClass::Exact => exact_duplicate_count += 1,
-            dedup::DedupClass::Uncertain { existing_raw_record_id, existing_source_id } => {
+            dedup::DedupClass::Uncertain {
+                existing_raw_record_id,
+                existing_source_id,
+            } => {
                 uncertain.push(UncertainMatch {
                     candidate_source_id: record.candidate.source_id,
                     candidate_date: record.candidate.date,
@@ -74,7 +80,12 @@ fn build_pending_import(
         }
     }
 
-    PendingImport { new_count, exact_duplicate_count, uncertain, errors }
+    PendingImport {
+        new_count,
+        exact_duplicate_count,
+        uncertain,
+        errors,
+    }
 }
 
 fn preview_csv_inner(
@@ -91,7 +102,12 @@ fn preview_csv_inner(
     for row_result in rows {
         match row_result {
             Ok(parsed) => {
-                let source_id = csv_source_id(account_id, &parsed.date, parsed.amount_cents, &parsed.description);
+                let source_id = csv_source_id(
+                    account_id,
+                    &parsed.date,
+                    parsed.amount_cents,
+                    &parsed.description,
+                );
                 candidates.push(Candidate {
                     source_id,
                     date: parsed.date,
@@ -123,7 +139,10 @@ fn preview_ofx_inner(
                 // The OFX parser returns the full source_id string; fall back to
                 // date/amount/description only when FITID was absent.
                 let source_id = parsed.source_id.unwrap_or_else(|| {
-                    format!("ofx|{}|{}|{}|{}", account_id, parsed.date, parsed.amount_cents, parsed.description)
+                    format!(
+                        "ofx|{}|{}|{}|{}",
+                        account_id, parsed.date, parsed.amount_cents, parsed.description
+                    )
                 });
                 candidates.push(Candidate {
                     source_id,
@@ -181,9 +200,9 @@ fn commit_records(
     for record in classified {
         let skip = match &record.class {
             dedup::DedupClass::Exact => true,
-            dedup::DedupClass::Uncertain { .. } => {
-                *decision_map.get(record.candidate.source_id.as_str()).unwrap_or(&false)
-            }
+            dedup::DedupClass::Uncertain { .. } => *decision_map
+                .get(record.candidate.source_id.as_str())
+                .unwrap_or(&false),
             dedup::DedupClass::New => false,
         };
         if skip {
@@ -247,7 +266,12 @@ fn commit_records(
 
     tx.commit().map_err(|e| e.to_string())?;
 
-    Ok(ImportResult { batch_id, imported_count, skipped_count, errors: parse_errors })
+    Ok(ImportResult {
+        batch_id,
+        imported_count,
+        skipped_count,
+        errors: parse_errors,
+    })
 }
 
 fn import_csv_inner(
@@ -266,7 +290,12 @@ fn import_csv_inner(
     for row_result in rows {
         match row_result {
             Ok(parsed) => {
-                let source_id = csv_source_id(account_id, &parsed.date, parsed.amount_cents, &parsed.description);
+                let source_id = csv_source_id(
+                    account_id,
+                    &parsed.date,
+                    parsed.amount_cents,
+                    &parsed.description,
+                );
                 candidates.push(Candidate {
                     source_id,
                     date: parsed.date,
@@ -280,7 +309,15 @@ fn import_csv_inner(
     }
 
     let classified = dedup::classify_candidates(conn, account_id, candidates);
-    commit_records(conn, "csv", account_id, filename, classified, decisions, parse_errors)
+    commit_records(
+        conn,
+        "csv",
+        account_id,
+        filename,
+        classified,
+        decisions,
+        parse_errors,
+    )
 }
 
 fn import_ofx_inner(
@@ -301,7 +338,10 @@ fn import_ofx_inner(
                 // The OFX parser returns the full source_id string; fall back to
                 // date/amount/description only when FITID was absent.
                 let source_id = parsed.source_id.unwrap_or_else(|| {
-                    format!("ofx|{}|{}|{}|{}", account_id, parsed.date, parsed.amount_cents, parsed.description)
+                    format!(
+                        "ofx|{}|{}|{}|{}",
+                        account_id, parsed.date, parsed.amount_cents, parsed.description
+                    )
                 });
                 candidates.push(Candidate {
                     source_id,
@@ -316,7 +356,15 @@ fn import_ofx_inner(
     }
 
     let classified = dedup::classify_candidates(conn, account_id, candidates);
-    commit_records(conn, "ofx", account_id, filename, classified, decisions, parse_errors)
+    commit_records(
+        conn,
+        "ofx",
+        account_id,
+        filename,
+        classified,
+        decisions,
+        parse_errors,
+    )
 }
 
 #[tauri::command]
@@ -328,7 +376,13 @@ pub fn import_ofx(
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
     let mut conn = db.lock().map_err(|e| e.to_string())?;
-    import_ofx_inner(&mut conn, &content, &account_id, &filename, &decisions.unwrap_or_default())
+    import_ofx_inner(
+        &mut conn,
+        &content,
+        &account_id,
+        &filename,
+        &decisions.unwrap_or_default(),
+    )
 }
 
 #[tauri::command]
@@ -346,7 +400,14 @@ pub fn import_csv(
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
     let mut conn = db.lock().map_err(|e| e.to_string())?;
-    import_csv_inner(&mut conn, &content, &mapping, &account_id, &filename, &decisions.unwrap_or_default())
+    import_csv_inner(
+        &mut conn,
+        &content,
+        &mapping,
+        &account_id,
+        &filename,
+        &decisions.unwrap_or_default(),
+    )
 }
 
 #[cfg(test)]
@@ -400,7 +461,15 @@ mod tests {
             credit_col: None,
         };
 
-        let result = import_csv_inner(&mut conn, THREE_ROW_CSV, &mapping, &account_id, "test.csv", &[]).unwrap();
+        let result = import_csv_inner(
+            &mut conn,
+            THREE_ROW_CSV,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
 
         assert_eq!(result.imported_count, 3);
         assert_eq!(result.skipped_count, 0);
@@ -465,7 +534,8 @@ mod tests {
         let mut conn = setup();
         let account_id = insert_account(&conn);
 
-        let result = import_ofx_inner(&mut conn, TWO_TXN_OFX, &account_id, "test.ofx", &[]).unwrap();
+        let result =
+            import_ofx_inner(&mut conn, TWO_TXN_OFX, &account_id, "test.ofx", &[]).unwrap();
 
         assert_eq!(result.imported_count, 2);
         assert_eq!(result.skipped_count, 0);
@@ -529,11 +599,27 @@ mod tests {
         let mapping = default_mapping();
 
         // First import writes 3 records.
-        let first = import_csv_inner(&mut conn, THREE_ROW_CSV, &mapping, &account_id, "test.csv", &[]).unwrap();
+        let first = import_csv_inner(
+            &mut conn,
+            THREE_ROW_CSV,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
         assert_eq!(first.imported_count, 3);
 
         // Second import of the same file - all exact dups, nothing written.
-        let second = import_csv_inner(&mut conn, THREE_ROW_CSV, &mapping, &account_id, "test.csv", &[]).unwrap();
+        let second = import_csv_inner(
+            &mut conn,
+            THREE_ROW_CSV,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
         assert_eq!(second.imported_count, 0);
         assert_eq!(second.skipped_count, 3);
         assert!(second.batch_id.is_empty());
@@ -552,7 +638,15 @@ mod tests {
         let mapping = default_mapping();
 
         // First import via CSV creates source_id like csv|...|...|...|...
-        import_csv_inner(&mut conn, THREE_ROW_CSV, &mapping, &account_id, "test.csv", &[]).unwrap();
+        import_csv_inner(
+            &mut conn,
+            THREE_ROW_CSV,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
 
         // Re-import with a different source_id but same fields simulates an uncertain match.
         // We construct a raw_record with a different source_id manually.
@@ -573,7 +667,8 @@ mod tests {
     fn preview_csv_all_new_when_no_existing() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let result = preview_csv_inner(&conn, THREE_ROW_CSV, &default_mapping(), &account_id).unwrap();
+        let result =
+            preview_csv_inner(&conn, THREE_ROW_CSV, &default_mapping(), &account_id).unwrap();
         assert_eq!(result.new_count, 3);
         assert_eq!(result.exact_duplicate_count, 0);
         assert!(result.uncertain.is_empty());
@@ -585,7 +680,15 @@ mod tests {
         let mut conn = setup();
         let account_id = insert_account(&conn);
         let mapping = default_mapping();
-        import_csv_inner(&mut conn, THREE_ROW_CSV, &mapping, &account_id, "test.csv", &[]).unwrap();
+        import_csv_inner(
+            &mut conn,
+            THREE_ROW_CSV,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
         let result = preview_csv_inner(&conn, THREE_ROW_CSV, &mapping, &account_id).unwrap();
         assert_eq!(result.new_count, 0);
         assert_eq!(result.exact_duplicate_count, 3);

@@ -22,19 +22,11 @@
     onsuccess: () => void;
   } = $props();
 
-  let fromId = $state("");
-  let toId = $state("");
+  let fromId = $state(initialFrom ?? "");
+  let toId = $state(initialTo ?? "");
   let amountStr = $state("");
   let error = $state<string | null>(null);
   let saving = $state(false);
-
-  $effect(() => {
-    if (!open) return;
-    fromId = initialFrom ?? "";
-    toId = initialTo ?? "";
-    amountStr = "";
-    error = null;
-  });
 
   async function handleSubmit(e: Event) {
     e.preventDefault();

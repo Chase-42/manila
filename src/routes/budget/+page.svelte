@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ChevronRight, ChevronDown, ArrowLeftRight } from '@lucide/svelte';
-  import { getBudgetMonth, setAllocation } from '$lib/budget';
+  import { getBudgetMonth, setAllocation, parseCentsFromString } from '$lib/budget';
   import { formatCents } from '$lib/money';
   import type { BudgetMonthView, BudgetGroupView, BudgetCategoryRow } from '$lib/budget';
   import ReallocateDialog from '$lib/components/ReallocateDialog.svelte';
@@ -18,6 +18,8 @@
   let reallocOpen = $state(false);
   let reallocInitialFrom = $state<string | undefined>(undefined);
   let reallocInitialTo = $state<string | undefined>(undefined);
+  // Increment to force remount of ReallocateDialog on each open, giving it fresh state from props.
+  let reallocKey = $state(0);
 
   function toMonthLabel(m: string): string {
     const [y, mo] = m.split('-').map(Number);
@@ -64,13 +66,8 @@
     collapsedGroups = next;
   }
 
-  function parseCents(val: string): number {
-    const n = parseFloat(val);
-    return isNaN(n) || n < 0 ? 0 : Math.round(n * 100);
-  }
-
   async function saveAllocation(categoryId: string) {
-    const cents = parseCents(allocationInputs[categoryId] ?? '');
+    const cents = Math.max(0, parseCentsFromString(allocationInputs[categoryId] ?? ''));
     try {
       await setAllocation(categoryId, selectedMonth, cents);
       await load();
@@ -84,12 +81,14 @@
   function openReallocFrom(categoryId: string) {
     reallocInitialFrom = categoryId;
     reallocInitialTo = undefined;
+    reallocKey++;
     reallocOpen = true;
   }
 
   function openReallocTo(categoryId: string) {
     reallocInitialFrom = undefined;
     reallocInitialTo = categoryId;
+    reallocKey++;
     reallocOpen = true;
   }
 
@@ -317,14 +316,16 @@
   {/if}
 </div>
 
-<ReallocateDialog
-  bind:open={reallocOpen}
-  categories={allExpenseCategories}
-  initialFrom={reallocInitialFrom}
-  initialTo={reallocInitialTo}
-  month={selectedMonth}
-  onsuccess={() => { void load(); }}
-/>
+{#key reallocKey}
+  <ReallocateDialog
+    bind:open={reallocOpen}
+    categories={allExpenseCategories}
+    initialFrom={reallocInitialFrom}
+    initialTo={reallocInitialTo}
+    month={selectedMonth}
+    onsuccess={() => { void load(); }}
+  />
+{/key}
 
 <style>
   .page {

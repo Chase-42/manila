@@ -9,6 +9,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (4, MIGRATION_004),
     (5, MIGRATION_005),
     (6, MIGRATION_006),
+    (7, MIGRATION_007),
 ];
 
 const MIGRATION_001: &str = "
@@ -146,6 +147,28 @@ const MIGRATION_006: &str = "
     DROP TABLE monthly_targets;
 ";
 
+const MIGRATION_007: &str = "
+    CREATE TABLE allocation_events_new (
+        id                       TEXT NOT NULL PRIMARY KEY,
+        category_id              TEXT NOT NULL REFERENCES categories(id),
+        month                    TEXT NOT NULL,
+        amount_cents             INTEGER NOT NULL,
+        kind                     TEXT NOT NULL,
+        counterpart_category_id  TEXT REFERENCES categories(id),
+        note                     TEXT,
+        created_at               TEXT NOT NULL
+    );
+
+    INSERT INTO allocation_events_new
+        (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
+    SELECT id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at
+    FROM allocation_events;
+
+    DROP TABLE allocation_events;
+
+    ALTER TABLE allocation_events_new RENAME TO allocation_events;
+";
+
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
     for &(version, sql) in MIGRATIONS {
         let already_applied: bool = conn.query_row(
@@ -242,7 +265,10 @@ mod tests {
             )
             .unwrap()
             > 0;
-        assert!(exists, "allocation_events table should exist after migration 4");
+        assert!(
+            exists,
+            "allocation_events table should exist after migration 4"
+        );
     }
 
     #[test]
@@ -258,7 +284,10 @@ mod tests {
             )
             .unwrap()
             > 0;
-        assert!(table_exists, "category_groups table should exist after migration 5");
+        assert!(
+            table_exists,
+            "category_groups table should exist after migration 5"
+        );
 
         let column_exists: bool = conn
             .query_row(
@@ -268,7 +297,10 @@ mod tests {
             )
             .unwrap()
             > 0;
-        assert!(column_exists, "categories.group_id column should exist after migration 5");
+        assert!(
+            column_exists,
+            "categories.group_id column should exist after migration 5"
+        );
     }
 
     #[test]
@@ -297,7 +329,53 @@ mod tests {
                 )
                 .unwrap()
                 > 0;
-            assert!(!exists, "table {dropped} should not exist after migration 6");
+            assert!(
+                !exists,
+                "table {dropped} should not exist after migration 6"
+            );
+        }
+    }
+
+    #[test]
+    fn migration_007_drops_group_id_from_allocation_events() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let has_group_id: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('allocation_events') WHERE name='group_id'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(
+            !has_group_id,
+            "allocation_events.group_id should not exist after migration 7"
+        );
+
+        // Core columns still present
+        for col in &[
+            "id",
+            "category_id",
+            "month",
+            "amount_cents",
+            "kind",
+            "note",
+            "created_at",
+        ] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('allocation_events') WHERE name=?1",
+                    [col],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(
+                exists,
+                "allocation_events.{col} should still exist after migration 7"
+            );
         }
     }
 

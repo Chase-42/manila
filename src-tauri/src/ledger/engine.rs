@@ -3,7 +3,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
-pub enum EngineError {
+pub(crate) enum EngineError {
     #[error("postings must not be empty")]
     EmptyPostings,
     #[error("postings do not balance: sum is {0} cents (must be zero)")]
@@ -12,7 +12,7 @@ pub enum EngineError {
     Db(#[from] rusqlite::Error),
 }
 
-pub struct PostingInput {
+pub(crate) struct PostingInput {
     pub account_id: String,
     pub amount_cents: i64,
 }
@@ -25,7 +25,7 @@ pub struct PostingInput {
 ///
 /// Every call must supply postings that sum to exactly zero. This is asserted
 /// before any write; an imbalance or empty slice returns Err and writes nothing.
-pub fn create_transaction(
+pub(crate) fn create_transaction(
     conn: &mut Connection,
     account_id: &str,
     date: &str,
@@ -89,7 +89,7 @@ pub fn create_transaction(
 }
 
 #[derive(Debug, Error)]
-pub enum TransferError {
+pub(crate) enum TransferError {
     #[error("a transfer requires exactly two postings, got {0}")]
     WrongPostingCount(usize),
     #[error("a transfer must touch two different accounts")]
@@ -102,7 +102,7 @@ pub enum TransferError {
 ///
 /// A transfer is a transaction whose postings touch exactly two different
 /// accounts and sum to zero. No category assignment is involved.
-pub fn create_transfer(
+pub(crate) fn create_transfer(
     conn: &mut Connection,
     account_id: &str,
     date: &str,
@@ -116,7 +116,14 @@ pub fn create_transfer(
     if postings[0].account_id == postings[1].account_id {
         return Err(TransferError::SameAccount);
     }
-    Ok(create_transaction(conn, account_id, date, amount_cents, description, postings)?)
+    Ok(create_transaction(
+        conn,
+        account_id,
+        date,
+        amount_cents,
+        description,
+        postings,
+    )?)
 }
 
 #[cfg(test)]
@@ -142,8 +149,14 @@ mod tests {
     fn balanced_postings_succeed_and_rows_are_written() {
         let mut conn = setup();
         let postings = vec![
-            PostingInput { account_id: "acc-checking".into(), amount_cents: -5000 },
-            PostingInput { account_id: "acc-credit".into(), amount_cents: 5000 },
+            PostingInput {
+                account_id: "acc-checking".into(),
+                amount_cents: -5000,
+            },
+            PostingInput {
+                account_id: "acc-credit".into(),
+                amount_cents: 5000,
+            },
         ];
 
         let tx_id = create_transaction(
@@ -157,7 +170,11 @@ mod tests {
         .unwrap();
 
         let tx_count: i64 = conn
-            .query_row("SELECT COUNT(*) FROM transactions WHERE id = ?1", [&tx_id], |r| r.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM transactions WHERE id = ?1",
+                [&tx_id],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(tx_count, 1);
 
@@ -184,8 +201,14 @@ mod tests {
     fn unbalanced_postings_return_err_and_write_nothing() {
         let mut conn = setup();
         let postings = vec![
-            PostingInput { account_id: "acc-checking".into(), amount_cents: -5000 },
-            PostingInput { account_id: "acc-credit".into(), amount_cents: 4999 },
+            PostingInput {
+                account_id: "acc-checking".into(),
+                amount_cents: -5000,
+            },
+            PostingInput {
+                account_id: "acc-credit".into(),
+                amount_cents: 4999,
+            },
         ];
 
         let result = create_transaction(
@@ -208,8 +231,7 @@ mod tests {
     #[test]
     fn empty_postings_return_err() {
         let mut conn = setup();
-        let result =
-            create_transaction(&mut conn, "acc-checking", "2026-08-22", 0, "test", &[]);
+        let result = create_transaction(&mut conn, "acc-checking", "2026-08-22", 0, "test", &[]);
         assert!(matches!(result, Err(EngineError::EmptyPostings)));
     }
 
@@ -217,8 +239,14 @@ mod tests {
     fn transfer_creates_two_postings_summing_to_zero() {
         let mut conn = setup();
         let postings = vec![
-            PostingInput { account_id: "acc-checking".into(), amount_cents: -45000 },
-            PostingInput { account_id: "acc-credit".into(), amount_cents: 45000 },
+            PostingInput {
+                account_id: "acc-checking".into(),
+                amount_cents: -45000,
+            },
+            PostingInput {
+                account_id: "acc-credit".into(),
+                amount_cents: 45000,
+            },
         ];
 
         let tx_id = create_transfer(

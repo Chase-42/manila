@@ -14,27 +14,75 @@ const SEED_GROUPS: &[(&str, &str, i64)] = &[
 // Maps seeded category IDs to their default group IDs.
 const SEED_CATEGORY_GROUPS: &[(&str, &str)] = &[
     // Food & Dining
-    ("a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5", "10000000-0000-4000-8000-000000000001"), // Groceries
-    ("b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6", "10000000-0000-4000-8000-000000000001"), // Dining Out
+    (
+        "a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5",
+        "10000000-0000-4000-8000-000000000001",
+    ), // Groceries
+    (
+        "b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6",
+        "10000000-0000-4000-8000-000000000001",
+    ), // Dining Out
     // Transportation
-    ("c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7", "10000000-0000-4000-8000-000000000002"), // Gas
-    ("d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8", "10000000-0000-4000-8000-000000000002"), // Transportation
-    ("c9d0e1f2-a3b4-4c5d-6e7f-a8b9c0d1e2f3", "10000000-0000-4000-8000-000000000002"), // Car Maintenance
+    (
+        "c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7",
+        "10000000-0000-4000-8000-000000000002",
+    ), // Gas
+    (
+        "d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8",
+        "10000000-0000-4000-8000-000000000002",
+    ), // Transportation
+    (
+        "c9d0e1f2-a3b4-4c5d-6e7f-a8b9c0d1e2f3",
+        "10000000-0000-4000-8000-000000000002",
+    ), // Car Maintenance
     // Home
-    ("e5f6a7b8-c9d0-4e1f-2a3b-c4d5e6f7a8b9", "10000000-0000-4000-8000-000000000003"), // Utilities
-    ("d0e1f2a3-b4c5-4d6e-7f8a-b9c0d1e2f3a4", "10000000-0000-4000-8000-000000000003"), // Home Maintenance
+    (
+        "e5f6a7b8-c9d0-4e1f-2a3b-c4d5e6f7a8b9",
+        "10000000-0000-4000-8000-000000000003",
+    ), // Utilities
+    (
+        "d0e1f2a3-b4c5-4d6e-7f8a-b9c0d1e2f3a4",
+        "10000000-0000-4000-8000-000000000003",
+    ), // Home Maintenance
     // Health
-    ("f6a7b8c9-d0e1-4f2a-3b4c-d5e6f7a8b9c0", "10000000-0000-4000-8000-000000000004"), // Healthcare
+    (
+        "f6a7b8c9-d0e1-4f2a-3b4c-d5e6f7a8b9c0",
+        "10000000-0000-4000-8000-000000000004",
+    ), // Healthcare
     // Lifestyle
-    ("a7b8c9d0-e1f2-4a3b-4c5d-e6f7a8b9c0d1", "10000000-0000-4000-8000-000000000005"), // Subscriptions
-    ("b8c9d0e1-f2a3-4b4c-5d6e-f7a8b9c0d1e2", "10000000-0000-4000-8000-000000000005"), // Personal Care
-    ("c5d6e7f8-a9b0-4c1d-2e3f-a4b5c6d7e8f9", "10000000-0000-4000-8000-000000000005"), // Electronics
-    ("d6e7f8a9-b0c1-4d2e-3f4a-b5c6d7e8f9a0", "10000000-0000-4000-8000-000000000005"), // Clothing
+    (
+        "a7b8c9d0-e1f2-4a3b-4c5d-e6f7a8b9c0d1",
+        "10000000-0000-4000-8000-000000000005",
+    ), // Subscriptions
+    (
+        "b8c9d0e1-f2a3-4b4c-5d6e-f7a8b9c0d1e2",
+        "10000000-0000-4000-8000-000000000005",
+    ), // Personal Care
+    (
+        "c5d6e7f8-a9b0-4c1d-2e3f-a4b5c6d7e8f9",
+        "10000000-0000-4000-8000-000000000005",
+    ), // Electronics
+    (
+        "d6e7f8a9-b0c1-4d2e-3f4a-b5c6d7e8f9a0",
+        "10000000-0000-4000-8000-000000000005",
+    ), // Clothing
     // Savings
-    ("e1f2a3b4-c5d6-4e7f-8a9b-c0d1e2f3a4b5", "10000000-0000-4000-8000-000000000006"), // Insurance
-    ("f2a3b4c5-d6e7-4f8a-9b0c-d1e2f3a4b5c6", "10000000-0000-4000-8000-000000000006"), // Travel
-    ("a3b4c5d6-e7f8-4a9b-0c1d-e2f3a4b5c6d7", "10000000-0000-4000-8000-000000000006"), // Gifts
-    ("b4c5d6e7-f8a9-4b0c-1d2e-f3a4b5c6d7e8", "10000000-0000-4000-8000-000000000006"), // Emergency Fund
+    (
+        "e1f2a3b4-c5d6-4e7f-8a9b-c0d1e2f3a4b5",
+        "10000000-0000-4000-8000-000000000006",
+    ), // Insurance
+    (
+        "f2a3b4c5-d6e7-4f8a-9b0c-d1e2f3a4b5c6",
+        "10000000-0000-4000-8000-000000000006",
+    ), // Travel
+    (
+        "a3b4c5d6-e7f8-4a9b-0c1d-e2f3a4b5c6d7",
+        "10000000-0000-4000-8000-000000000006",
+    ), // Gifts
+    (
+        "b4c5d6e7-f8a9-4b0c-1d2e-f3a4b5c6d7e8",
+        "10000000-0000-4000-8000-000000000006",
+    ), // Emergency Fund
 ];
 
 // Stable UUIDs so INSERT OR IGNORE is genuinely idempotent across upgrades.
@@ -43,19 +91,55 @@ const SEED_CATEGORIES: &[(&str, &str, &str)] = &[
     ("a1b2c3d4-e5f6-4a7b-8c9d-e0f1a2b3c4d5", "Groceries", "flow"),
     ("b2c3d4e5-f6a7-4b8c-9d0e-f1a2b3c4d5e6", "Dining Out", "flow"),
     ("c3d4e5f6-a7b8-4c9d-0e1f-a2b3c4d5e6f7", "Gas", "flow"),
-    ("d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8", "Transportation", "flow"),
+    (
+        "d4e5f6a7-b8c9-4d0e-1f2a-b3c4d5e6f7a8",
+        "Transportation",
+        "flow",
+    ),
     ("e5f6a7b8-c9d0-4e1f-2a3b-c4d5e6f7a8b9", "Utilities", "flow"),
     ("f6a7b8c9-d0e1-4f2a-3b4c-d5e6f7a8b9c0", "Healthcare", "flow"),
-    ("a7b8c9d0-e1f2-4a3b-4c5d-e6f7a8b9c0d1", "Subscriptions", "flow"),
-    ("b8c9d0e1-f2a3-4b4c-5d6e-f7a8b9c0d1e2", "Personal Care", "flow"),
-    ("c9d0e1f2-a3b4-4c5d-6e7f-a8b9c0d1e2f3", "Car Maintenance", "sinking"),
-    ("d0e1f2a3-b4c5-4d6e-7f8a-b9c0d1e2f3a4", "Home Maintenance", "sinking"),
-    ("e1f2a3b4-c5d6-4e7f-8a9b-c0d1e2f3a4b5", "Insurance", "sinking"),
+    (
+        "a7b8c9d0-e1f2-4a3b-4c5d-e6f7a8b9c0d1",
+        "Subscriptions",
+        "flow",
+    ),
+    (
+        "b8c9d0e1-f2a3-4b4c-5d6e-f7a8b9c0d1e2",
+        "Personal Care",
+        "flow",
+    ),
+    (
+        "c9d0e1f2-a3b4-4c5d-6e7f-a8b9c0d1e2f3",
+        "Car Maintenance",
+        "sinking",
+    ),
+    (
+        "d0e1f2a3-b4c5-4d6e-7f8a-b9c0d1e2f3a4",
+        "Home Maintenance",
+        "sinking",
+    ),
+    (
+        "e1f2a3b4-c5d6-4e7f-8a9b-c0d1e2f3a4b5",
+        "Insurance",
+        "sinking",
+    ),
     ("f2a3b4c5-d6e7-4f8a-9b0c-d1e2f3a4b5c6", "Travel", "sinking"),
     ("a3b4c5d6-e7f8-4a9b-0c1d-e2f3a4b5c6d7", "Gifts", "sinking"),
-    ("b4c5d6e7-f8a9-4b0c-1d2e-f3a4b5c6d7e8", "Emergency Fund", "sinking"),
-    ("c5d6e7f8-a9b0-4c1d-2e3f-a4b5c6d7e8f9", "Electronics", "sinking"),
-    ("d6e7f8a9-b0c1-4d2e-3f4a-b5c6d7e8f9a0", "Clothing", "sinking"),
+    (
+        "b4c5d6e7-f8a9-4b0c-1d2e-f3a4b5c6d7e8",
+        "Emergency Fund",
+        "sinking",
+    ),
+    (
+        "c5d6e7f8-a9b0-4c1d-2e3f-a4b5c6d7e8f9",
+        "Electronics",
+        "sinking",
+    ),
+    (
+        "d6e7f8a9-b0c1-4d2e-3f4a-b5c6d7e8f9a0",
+        "Clothing",
+        "sinking",
+    ),
 ];
 
 const SEED_INCOME_CATEGORIES: &[(&str, &str)] = &[
@@ -201,7 +285,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(unassigned, 0, "all 16 seeded categories should have a group_id");
+        assert_eq!(
+            unassigned, 0,
+            "all 16 seeded categories should have a group_id"
+        );
     }
 
     #[test]
@@ -216,7 +303,14 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            vec!["Food & Dining", "Transportation", "Home", "Health", "Lifestyle", "Savings"]
+            vec![
+                "Food & Dining",
+                "Transportation",
+                "Home",
+                "Health",
+                "Lifestyle",
+                "Savings"
+            ]
         );
     }
 }

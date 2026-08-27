@@ -20,9 +20,7 @@ pub fn list_category_groups(
 ) -> Result<Vec<CategoryGroupRow>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare(
-            "SELECT id, name, sort_order FROM category_groups ORDER BY sort_order",
-        )
+        .prepare("SELECT id, name, sort_order FROM category_groups ORDER BY sort_order")
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -89,10 +87,7 @@ pub fn update_category_group(
 }
 
 #[tauri::command]
-pub fn delete_category_group(
-    db: State<'_, Mutex<Connection>>,
-    id: String,
-) -> Result<(), String> {
+pub fn delete_category_group(db: State<'_, Mutex<Connection>>, id: String) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let assigned: i64 = conn
         .query_row(
@@ -243,7 +238,10 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert!(assigned > 0, "test requires a group with assigned categories");
+        assert!(
+            assigned > 0,
+            "test requires a group with assigned categories"
+        );
 
         let result: Result<(), String> = if assigned > 0 {
             Err(format!(

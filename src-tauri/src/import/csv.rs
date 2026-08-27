@@ -94,7 +94,10 @@ pub fn extract_preview(content: &str) -> Result<CsvPreview, String> {
         })
         .collect::<Result<_, _>>()?;
 
-    Ok(CsvPreview { headers, sample_rows })
+    Ok(CsvPreview {
+        headers,
+        sample_rows,
+    })
 }
 
 fn col_index(headers: &[String], col: &str) -> Result<usize, String> {
@@ -125,11 +128,22 @@ pub fn parse_rows(
 
     // Validate amount columns are present before iterating rows.
     let amount_mode = if let Some(col) = &mapping.amount_col {
-        AmountMode::Single { idx: col_index(&headers, col)? }
+        AmountMode::Single {
+            idx: col_index(&headers, col)?,
+        }
     } else {
-        let d = mapping.debit_col.as_deref().ok_or("debit_col required in debit/credit mode")?;
-        let c = mapping.credit_col.as_deref().ok_or("credit_col required in debit/credit mode")?;
-        AmountMode::Split { debit_idx: col_index(&headers, d)?, credit_idx: col_index(&headers, c)? }
+        let d = mapping
+            .debit_col
+            .as_deref()
+            .ok_or("debit_col required in debit/credit mode")?;
+        let c = mapping
+            .credit_col
+            .as_deref()
+            .ok_or("credit_col required in debit/credit mode")?;
+        AmountMode::Split {
+            debit_idx: col_index(&headers, d)?,
+            credit_idx: col_index(&headers, c)?,
+        }
     };
 
     let mut results = Vec::new();
@@ -152,7 +166,14 @@ pub fn parse_rows(
             .collect();
         let raw_json = serde_json::to_string(&raw_map).unwrap_or_else(|_| "{}".into());
 
-        let parsed = parse_row(&row, date_idx, desc_idx, &amount_mode, mapping.flip_sign, &raw_json);
+        let parsed = parse_row(
+            &row,
+            date_idx,
+            desc_idx,
+            &amount_mode,
+            mapping.flip_sign,
+            &raw_json,
+        );
         results.push(parsed);
     }
 
@@ -173,7 +194,10 @@ fn parse_row(
     raw_json: &str,
 ) -> Result<ParsedRow, String> {
     let date_str = row.get(date_idx).map(|s| s.as_str()).unwrap_or("");
-    let desc = row.get(desc_idx).map(|s| s.trim().to_owned()).unwrap_or_default();
+    let desc = row
+        .get(desc_idx)
+        .map(|s| s.trim().to_owned())
+        .unwrap_or_default();
 
     if date_str.trim().is_empty() {
         return Err("empty date cell".into());
@@ -187,9 +211,16 @@ fn parse_row(
                 return Err("empty amount cell".into());
             }
             let cents = parse_amount(cell)?;
-            if flip_sign { -cents } else { cents }
+            if flip_sign {
+                -cents
+            } else {
+                cents
+            }
         }
-        AmountMode::Split { debit_idx, credit_idx } => {
+        AmountMode::Split {
+            debit_idx,
+            credit_idx,
+        } => {
             let debit_cell = row.get(*debit_idx).map(|s| s.trim()).unwrap_or("");
             let credit_cell = row.get(*credit_idx).map(|s| s.trim()).unwrap_or("");
             // Exactly one side should be non-empty per row; if both or neither, error.
@@ -199,15 +230,25 @@ fn parse_row(
                     // Some banks fill both columns; use debit if non-zero else credit.
                     let d = parse_amount(debit_cell)?;
                     let c = parse_amount(credit_cell)?;
-                    if d != 0 { -d } else { c }
+                    if d != 0 {
+                        -d
+                    } else {
+                        c
+                    }
                 }
-                (false, true) => -parse_amount(debit_cell)?,  // debit = outflow
-                (true, false) => parse_amount(credit_cell)?,  // credit = inflow
+                (false, true) => -parse_amount(debit_cell)?, // debit = outflow
+                (true, false) => parse_amount(credit_cell)?, // credit = inflow
             }
         }
     };
 
-    Ok(ParsedRow { date, amount_cents, description: desc, raw_json: raw_json.to_owned(), source_id: None })
+    Ok(ParsedRow {
+        date,
+        amount_cents,
+        description: desc,
+        raw_json: raw_json.to_owned(),
+        source_id: None,
+    })
 }
 
 #[cfg(test)]

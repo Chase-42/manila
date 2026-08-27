@@ -1,7 +1,7 @@
 use serde_json;
 
-use super::ParsedRow;
 use super::csv::parse_amount;
+use super::ParsedRow;
 
 /// Extract the text value of the first occurrence of `tag` within `block`.
 ///
@@ -18,7 +18,11 @@ fn extract_tag(block: &str, tag: &str) -> Option<String> {
     let rest = &block[start..];
     let end = rest.find('<').unwrap_or(rest.len());
     let value = rest[..end].trim().to_owned();
-    if value.is_empty() { None } else { Some(value) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 /// Take the first 8 chars of an OFX date string (YYYYMMDD) and return YYYY-MM-DD.
@@ -35,16 +39,19 @@ fn parse_ofx_date(s: &str) -> Result<String, String> {
     if !digits.chars().all(|c| c.is_ascii_digit()) {
         return Err(format!("OFX date has non-digit chars: {s:?}"));
     }
-    Ok(format!("{}-{}-{}", &digits[..4], &digits[4..6], &digits[6..8]))
+    Ok(format!(
+        "{}-{}-{}",
+        &digits[..4],
+        &digits[4..6],
+        &digits[6..8]
+    ))
 }
 
 fn parse_stmttrn(block: &str, account_id: &str) -> Result<ParsedRow, String> {
-    let dtposted = extract_tag(block, "DTPOSTED")
-        .ok_or_else(|| "missing DTPOSTED".to_owned())?;
+    let dtposted = extract_tag(block, "DTPOSTED").ok_or_else(|| "missing DTPOSTED".to_owned())?;
     let date = parse_ofx_date(&dtposted)?;
 
-    let trnamt = extract_tag(block, "TRNAMT")
-        .ok_or_else(|| "missing TRNAMT".to_owned())?;
+    let trnamt = extract_tag(block, "TRNAMT").ok_or_else(|| "missing TRNAMT".to_owned())?;
     let amount_cents = parse_amount(&trnamt)?;
 
     let name = extract_tag(block, "NAME").unwrap_or_default();
@@ -79,13 +86,22 @@ fn parse_stmttrn(block: &str, account_id: &str) -> Result<ParsedRow, String> {
     }
     let raw_json = serde_json::to_string(&raw_map).unwrap_or_else(|_| "{}".into());
 
-    Ok(ParsedRow { date, amount_cents, description, raw_json, source_id })
+    Ok(ParsedRow {
+        date,
+        amount_cents,
+        description,
+        raw_json,
+        source_id,
+    })
 }
 
 /// Parse an OFX or QFX file (1.x SGML or 2.x XML) and return one result per
 /// `<STMTTRN>` block. The outer Result is for file-level failures; per-row
 /// errors are inner Err values so the caller can count skipped rows.
-pub fn parse_ofx(content: &str, account_id: &str) -> Result<Vec<Result<ParsedRow, String>>, String> {
+pub fn parse_ofx(
+    content: &str,
+    account_id: &str,
+) -> Result<Vec<Result<ParsedRow, String>>, String> {
     let lower = content.to_lowercase();
     let open_tag = "<stmttrn>";
     let close_tag = "</stmttrn>";
@@ -127,7 +143,10 @@ mod tests {
 
     #[test]
     fn date_with_tz_suffix() {
-        assert_eq!(parse_ofx_date("20260120000000.000[-5:EST]").unwrap(), "2026-01-20");
+        assert_eq!(
+            parse_ofx_date("20260120000000.000[-5:EST]").unwrap(),
+            "2026-01-20"
+        );
     }
 
     #[test]

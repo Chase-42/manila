@@ -1,6 +1,7 @@
 <script lang="ts">
   import { upsertTransactionMeta } from '$lib/transactions';
-  import { listCategories, upsertCategoryAssignment, type CategoryRow } from '$lib/categories';
+  import { listCategories, upsertSplit, type CategoryRow } from '$lib/categories';
+  import { listIncomeCategories, type IncomeCategoryItem } from '$lib/income';
   import { formatCents } from '$lib/money';
   import type { TransactionRow } from '$lib/generated/TransactionRow';
   import * as Dialog from '$lib/components/ui/dialog';
@@ -17,11 +18,15 @@
   let notes = $state('');
   let tagsInput = $state('');
   let reviewed = $state(false);
-  // '' means uncategorized; any other string is a category UUID.
+  // Compound value: '' | 'envelope:<uuid>' | 'income:<uuid>'
   let categoryValue = $state('');
   let categories = $state<CategoryRow[]>([]);
+  let incomeCategories = $state<IncomeCategoryItem[]>([]);
   let saving = $state(false);
   let error = $state<string | null>(null);
+
+  let flowCategories = $derived(categories.filter((c) => c.kind === 'flow'));
+  let sinkingCategories = $derived(categories.filter((c) => c.kind === 'sinking'));
 
   // Sync local state from the transaction prop when dialog opens.
   $effect(() => {
@@ -29,7 +34,11 @@
       notes = transaction.notes;
       tagsInput = transaction.tags.join(', ');
       reviewed = transaction.reviewed;
-      categoryValue = transaction.category_id ?? '';
+      if (transaction.category_type && transaction.category_id) {
+        categoryValue = `${transaction.category_type}:${transaction.category_id}`;
+      } else {
+        categoryValue = '';
+      }
       error = null;
       loadCategories();
     }
@@ -37,7 +46,10 @@
 
   async function loadCategories() {
     try {
-      categories = await listCategories();
+      [categories, incomeCategories] = await Promise.all([
+        listCategories(),
+        listIncomeCategories(),
+      ]);
     } catch {
       // Backend not available in browser-only dev mode.
     }
@@ -55,7 +67,10 @@
     error = null;
     try {
       await upsertTransactionMeta(transaction.id, notes, parseTags(tagsInput), reviewed);
-      await upsertCategoryAssignment(transaction.id, categoryValue === '' ? null : categoryValue);
+      const [targetType, targetId] = categoryValue === ''
+        ? ['', '']
+        : categoryValue.split(':', 2) as [string, string];
+      await upsertSplit(transaction.id, targetType, targetId);
       onSaved();
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
@@ -92,9 +107,23 @@
           <label class="label" for="tx-category">Category</label>
           <select id="tx-category" class="category-select" bind:value={categoryValue}>
             <option value="">Uncategorized</option>
-            {#each categories as cat (cat.id)}
-              <option value={cat.id}>{cat.name}</option>
-            {/each}
+            {#if incomeCategories.length > 0}
+              <optgroup label="Income">
+                {#each incomeCategories as ic (ic.id)}
+                  <option value="income:{ic.id}">{ic.name}</option>
+                {/each}
+              </optgroup>
+            {/if}
+            {#if flowCategories.length > 0}
+              <optgroup label="Expenses">
+                {#each flowCategories as cat (cat.id)}
+                  <option value="envelope:{cat.id}">{cat.name}</option>
+                {/each}
+                {#each sinkingCategories as cat (cat.id)}
+                  <option value="envelope:{cat.id}">{cat.name}</option>
+                {/each}
+              </optgroup>
+            {/if}
           </select>
         </div>
 

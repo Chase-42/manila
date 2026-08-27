@@ -3,6 +3,8 @@ import type { BudgetMonthView } from "./generated/BudgetMonthView";
 
 export type { BudgetMonthView };
 export type { BudgetCategoryRow } from "./generated/BudgetCategoryRow";
+export type { BudgetGroupView } from "./generated/BudgetGroupView";
+export type { IncomeCategoryRow } from "./generated/IncomeCategoryRow";
 
 export async function getBudgetMonth(month: string): Promise<BudgetMonthView> {
   return invoke("get_budget_month", { month });
@@ -20,9 +22,3 @@ export async function setAllocation(
   });
 }
 
-export async function setMonthlyTarget(
-  month: string,
-  amountCents: number,
-): Promise<void> {
-  return invoke("set_monthly_target", { month, amount_cents: amountCents });
-}

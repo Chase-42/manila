@@ -7,6 +7,16 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/IncomeCategoryRow.ts")]
+pub struct IncomeCategoryRow {
+    pub income_category_id: String,
+    pub name: String,
+    /// sum of income splits on transactions dated in the current month
+    #[ts(type = "number")]
+    pub actual_cents: i64,
+}
+
+#[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/BudgetCategoryRow.ts")]
 pub struct BudgetCategoryRow {
     pub category_id: String,
@@ -23,16 +33,44 @@ pub struct BudgetCategoryRow {
 }
 
 #[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/BudgetGroupView.ts")]
+pub struct BudgetGroupView {
+    pub group_id: String,
+    pub group_name: String,
+    #[ts(type = "number")]
+    pub sort_order: i64,
+    #[ts(type = "number")]
+    pub total_allocated_cents: i64,
+    #[ts(type = "number")]
+    pub total_spent_cents: i64,
+    #[ts(type = "number")]
+    pub remaining_cents: i64,
+    pub categories: Vec<BudgetCategoryRow>,
+}
+
+#[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/BudgetMonthView.ts")]
 pub struct BudgetMonthView {
     pub month: String,
-    /// 0 if no monthly_targets row exists for this month
-    #[ts(type = "number")]
-    pub monthly_target_cents: i64,
-    /// monthly_target_cents minus the sum of all category allocations for the month
+    /// SUM(income splits for month) - SUM(allocation_events for month)
     #[ts(type = "number")]
     pub left_to_allocate_cents: i64,
-    pub categories: Vec<BudgetCategoryRow>,
+    pub income_rows: Vec<IncomeCategoryRow>,
+    pub flow_groups: Vec<BudgetGroupView>,
+    pub flow_ungrouped: Vec<BudgetCategoryRow>,
+    pub sinking_groups: Vec<BudgetGroupView>,
+    pub sinking_ungrouped: Vec<BudgetCategoryRow>,
+}
+
+struct RawBudgetRow {
+    category_id: String,
+    category_name: String,
+    kind: String,
+    group_id: Option<String>,
+    group_name: Option<String>,
+    group_sort_order: Option<i64>,
+    allocated_cents: i64,
+    spent_cents: i64,
 }
 
 #[tauri::command]
@@ -53,6 +91,9 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                 c.id,
                 c.name,
                 c.kind,
+                c.group_id,
+                cg.name,
+                cg.sort_order,
                 (
                     SELECT COALESCE(SUM(ae.amount_cents), 0)
                     FROM allocation_events ae
@@ -60,11 +101,12 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                       AND (c.kind = 'sinking' OR ae.month = ?1)
                 ) AS allocated_cents,
                 (
-                    SELECT COALESCE(ABS(SUM(ca.amount_cents)), 0)
-                    FROM category_assignments ca
-                    JOIN raw_records rr ON rr.transaction_id = ca.transaction_id
-                    WHERE ca.category_id = c.id
-                      AND ca.amount_cents < 0
+                    SELECT COALESCE(ABS(SUM(s.amount_cents)), 0)
+                    FROM splits s
+                    JOIN raw_records rr ON rr.transaction_id = s.transaction_id
+                    WHERE s.target_id = c.id
+                      AND s.target_type = 'envelope'
+                      AND s.amount_cents < 0
                       AND NOT EXISTS (
                           SELECT 1 FROM raw_records rr2
                           WHERE rr2.supersedes_id = rr.id
@@ -72,31 +114,129 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                       AND (c.kind = 'sinking' OR rr.date LIKE ?2)
                 ) AS spent_cents
              FROM categories c
-             ORDER BY c.kind, c.name",
+             LEFT JOIN category_groups cg ON cg.id = c.group_id
+             ORDER BY c.kind, cg.sort_order NULLS LAST, c.name",
         )
         .map_err(|e| e.to_string())?;
 
-    let categories: Vec<BudgetCategoryRow> = stmt
+    let raw_rows: Vec<RawBudgetRow> = stmt
         .query_map(rusqlite::params![month, month_prefix], |row| {
-            Ok(BudgetCategoryRow {
+            Ok(RawBudgetRow {
                 category_id: row.get(0)?,
                 category_name: row.get(1)?,
                 kind: row.get(2)?,
-                allocated_cents: row.get(3)?,
-                spent_cents: row.get(4)?,
+                group_id: row.get(3)?,
+                group_name: row.get(4)?,
+                group_sort_order: row.get(5)?,
+                allocated_cents: row.get(6)?,
+                spent_cents: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    let monthly_target_cents: i64 = conn
-        .query_row(
-            "SELECT amount_cents FROM monthly_targets WHERE month = ?1",
-            rusqlite::params![month],
-            |row| row.get(0),
+    let mut flow_groups: Vec<BudgetGroupView> = Vec::new();
+    let mut flow_ungrouped: Vec<BudgetCategoryRow> = Vec::new();
+    let mut sinking_groups: Vec<BudgetGroupView> = Vec::new();
+    let mut sinking_ungrouped: Vec<BudgetCategoryRow> = Vec::new();
+
+    for row in raw_rows {
+        let cat = BudgetCategoryRow {
+            category_id: row.category_id,
+            category_name: row.category_name,
+            kind: row.kind.clone(),
+            allocated_cents: row.allocated_cents,
+            spent_cents: row.spent_cents,
+        };
+
+        match row.kind.as_str() {
+            "flow" => match row.group_id {
+                Some(gid) => {
+                    if flow_groups.last().map_or(true, |g| g.group_id != gid) {
+                        flow_groups.push(BudgetGroupView {
+                            group_id: gid,
+                            group_name: row.group_name.unwrap_or_default(),
+                            sort_order: row.group_sort_order.unwrap_or(0),
+                            total_allocated_cents: 0,
+                            total_spent_cents: 0,
+                            remaining_cents: 0,
+                            categories: vec![cat],
+                        });
+                    } else if let Some(g) = flow_groups.last_mut() {
+                        g.categories.push(cat);
+                    }
+                }
+                None => flow_ungrouped.push(cat),
+            },
+            "sinking" => match row.group_id {
+                Some(gid) => {
+                    if sinking_groups.last().map_or(true, |g| g.group_id != gid) {
+                        sinking_groups.push(BudgetGroupView {
+                            group_id: gid,
+                            group_name: row.group_name.unwrap_or_default(),
+                            sort_order: row.group_sort_order.unwrap_or(0),
+                            total_allocated_cents: 0,
+                            total_spent_cents: 0,
+                            remaining_cents: 0,
+                            categories: vec![cat],
+                        });
+                    } else if let Some(g) = sinking_groups.last_mut() {
+                        g.categories.push(cat);
+                    }
+                }
+                None => sinking_ungrouped.push(cat),
+            },
+            _ => {}
+        }
+    }
+
+    // Derive rollup totals from nested rows; no re-query.
+    for g in &mut flow_groups {
+        g.total_allocated_cents = g.categories.iter().map(|c| c.allocated_cents).sum();
+        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum();
+        g.remaining_cents = g.total_allocated_cents - g.total_spent_cents;
+    }
+    for g in &mut sinking_groups {
+        g.total_allocated_cents = g.categories.iter().map(|c| c.allocated_cents).sum();
+        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum();
+        g.remaining_cents = g.total_allocated_cents - g.total_spent_cents;
+    }
+
+    // Income section: one row per non-hidden income category with actual splits for this month.
+    let mut income_stmt = conn
+        .prepare(
+            "SELECT ic.id, ic.name,
+                    COALESCE((
+                        SELECT SUM(s.amount_cents)
+                        FROM splits s
+                        JOIN raw_records rr ON rr.transaction_id = s.transaction_id
+                        WHERE s.target_id = ic.id
+                          AND s.target_type = 'income'
+                          AND NOT EXISTS (
+                              SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
+                          )
+                          AND rr.date LIKE ?1
+                    ), 0) AS actual_cents
+             FROM income_categories ic
+             WHERE ic.hidden = 0
+             ORDER BY ic.name",
         )
-        .unwrap_or(0);
+        .map_err(|e| e.to_string())?;
+
+    let income_rows: Vec<IncomeCategoryRow> = income_stmt
+        .query_map(rusqlite::params![month_prefix], |row| {
+            Ok(IncomeCategoryRow {
+                income_category_id: row.get(0)?,
+                name: row.get(1)?,
+                actual_cents: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    let total_income_cents: i64 = income_rows.iter().map(|r| r.actual_cents).sum();
 
     let total_month_allocated: i64 = conn
         .query_row(
@@ -108,13 +248,16 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
         )
         .map_err(|e| e.to_string())?;
 
-    let left_to_allocate_cents = monthly_target_cents - total_month_allocated;
+    let left_to_allocate_cents = total_income_cents - total_month_allocated;
 
     Ok(BudgetMonthView {
         month: month.to_owned(),
-        monthly_target_cents,
         left_to_allocate_cents,
-        categories,
+        income_rows,
+        flow_groups,
+        flow_ungrouped,
+        sinking_groups,
+        sinking_ungrouped,
     })
 }
 
@@ -166,31 +309,63 @@ fn set_allocation_inner(
     Ok(())
 }
 
-#[tauri::command]
-pub fn set_monthly_target(
-    db: State<'_, Mutex<Connection>>,
-    month: String,
-    amount_cents: i64,
-) -> Result<(), String> {
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT OR REPLACE INTO monthly_targets (month, amount_cents) VALUES (?1, ?2)",
-        rusqlite::params![month, amount_cents],
-    )
-    .map_err(|e| e.to_string())?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{db::open_connection, migrations::run_migrations, seed::seed_categories};
+    use crate::storage::{
+        db::open_connection,
+        migrations::run_migrations,
+        seed::{seed_categories, seed_category_groups, seed_income_categories},
+    };
+    use uuid::Uuid;
 
     fn test_db() -> Connection {
         let mut conn = open_connection(":memory:").unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
+        seed_category_groups(&conn).unwrap();
+        seed_income_categories(&conn).unwrap();
         conn
+    }
+
+    fn first_income_category_id(conn: &Connection) -> String {
+        conn.query_row(
+            "SELECT id FROM income_categories WHERE hidden = 0 LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    }
+
+    fn insert_income_split(conn: &Connection, income_cat_id: &str, amount_cents: i64, date: &str) {
+        let account_id = Uuid::new_v4().to_string();
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        let split_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES (?1, 'Bank', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id, date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, 'Income', '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("src|{}", rr_id), date, amount_cents],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO splits (id, transaction_id, target_type, target_id, amount_cents)
+             VALUES (?1, ?2, 'income', ?3, ?4)",
+            rusqlite::params![split_id, tx_id, income_cat_id, amount_cents],
+        )
+        .unwrap();
     }
 
     fn first_category_id(conn: &Connection, kind: &str) -> String {
@@ -200,6 +375,17 @@ mod tests {
             |r| r.get(0),
         )
         .unwrap()
+    }
+
+    fn find_category<'a>(view: &'a BudgetMonthView, category_id: &str) -> &'a BudgetCategoryRow {
+        view.flow_groups
+            .iter()
+            .flat_map(|g| g.categories.iter())
+            .chain(view.flow_ungrouped.iter())
+            .chain(view.sinking_groups.iter().flat_map(|g| g.categories.iter()))
+            .chain(view.sinking_ungrouped.iter())
+            .find(|r| r.category_id == category_id)
+            .unwrap()
     }
 
     #[test]
@@ -288,11 +474,7 @@ mod tests {
         set_allocation_inner(&conn, &cat_id, "2026-07", 10_000).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        let row = view
-            .categories
-            .iter()
-            .find(|r| r.category_id == cat_id)
-            .unwrap();
+        let row = find_category(&view, &cat_id);
         assert_eq!(row.allocated_cents, 20_000);
         assert_eq!(row.spent_cents, 0);
     }
@@ -305,51 +487,133 @@ mod tests {
         set_allocation_inner(&conn, &cat_id, "2026-08", 5_000).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        let row = view
-            .categories
-            .iter()
-            .find(|r| r.category_id == cat_id)
-            .unwrap();
+        let row = find_category(&view, &cat_id);
         // cumulative: both months
         assert_eq!(row.allocated_cents, 10_000);
     }
 
     #[test]
-    fn set_monthly_target_upserts() {
+    fn get_budget_month_groups_are_bucketed_by_kind() {
         let conn = test_db();
-        conn.execute(
-            "INSERT OR REPLACE INTO monthly_targets (month, amount_cents) VALUES ('2026-08', 300_000)",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT OR REPLACE INTO monthly_targets (month, amount_cents) VALUES ('2026-08', 400_000)",
-            [],
-        )
-        .unwrap();
-        let amount: i64 = conn
-            .query_row(
-                "SELECT amount_cents FROM monthly_targets WHERE month = '2026-08'",
-                [],
-                |r| r.get(0),
-            )
-            .unwrap();
-        assert_eq!(amount, 400_000);
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+
+        // All seeded categories are grouped; none should be in ungrouped.
+        assert!(view.flow_ungrouped.is_empty(), "all seeded flow categories should be grouped");
+        assert!(view.sinking_ungrouped.is_empty(), "all seeded sinking categories should be grouped");
+
+        // flow_groups should contain only flow categories
+        for g in &view.flow_groups {
+            for c in &g.categories {
+                assert_eq!(c.kind, "flow");
+            }
+        }
+        // sinking_groups should contain only sinking categories
+        for g in &view.sinking_groups {
+            for c in &g.categories {
+                assert_eq!(c.kind, "sinking");
+            }
+        }
     }
 
     #[test]
-    fn left_to_allocate_reflects_target_minus_allocations() {
+    fn get_budget_month_group_rollup_totals_match_sum_of_rows() {
         let conn = test_db();
-        conn.execute(
-            "INSERT OR REPLACE INTO monthly_targets (month, amount_cents) VALUES ('2026-08', 300_000)",
-            [],
-        )
-        .unwrap();
+        // Allocate to a couple of categories so totals are non-zero.
+        let flow_id = first_category_id(&conn, "flow");
+        let sinking_id = first_category_id(&conn, "sinking");
+        set_allocation_inner(&conn, &flow_id, "2026-08", 15_000).unwrap();
+        set_allocation_inner(&conn, &sinking_id, "2026-08", 8_000).unwrap();
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        for g in &view.flow_groups {
+            let expected_alloc: i64 = g.categories.iter().map(|c| c.allocated_cents).sum();
+            let expected_spent: i64 = g.categories.iter().map(|c| c.spent_cents).sum();
+            assert_eq!(g.total_allocated_cents, expected_alloc);
+            assert_eq!(g.total_spent_cents, expected_spent);
+        }
+        for g in &view.sinking_groups {
+            let expected_alloc: i64 = g.categories.iter().map(|c| c.allocated_cents).sum();
+            let expected_spent: i64 = g.categories.iter().map(|c| c.spent_cents).sum();
+            assert_eq!(g.total_allocated_cents, expected_alloc);
+            assert_eq!(g.total_spent_cents, expected_spent);
+        }
+    }
+
+    #[test]
+    fn get_budget_month_groups_absent_when_no_categories_of_that_kind() {
+        let conn = test_db();
+        // Health group has only flow categories (Healthcare); it should appear in flow_groups
+        // but NOT in sinking_groups.
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let health_in_sinking = view
+            .sinking_groups
+            .iter()
+            .any(|g| g.group_name == "Health");
+        assert!(!health_in_sinking, "Health group should not appear in sinking_groups");
+        // Savings group has only sinking categories; it should not appear in flow_groups.
+        let savings_in_flow = view.flow_groups.iter().any(|g| g.group_name == "Savings");
+        assert!(!savings_in_flow, "Savings group should not appear in flow_groups");
+    }
+
+    #[test]
+    fn income_rows_present_with_zero_actual_when_no_splits() {
+        let conn = test_db();
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        // 4 seeded income categories, none hidden
+        assert_eq!(view.income_rows.len(), 4);
+        for row in &view.income_rows {
+            assert_eq!(row.actual_cents, 0, "no splits yet so actual_cents should be 0");
+        }
+    }
+
+    #[test]
+    fn income_rows_reflect_splits_dated_in_month() {
+        let conn = test_db();
+        let income_id = first_income_category_id(&conn);
+        insert_income_split(&conn, &income_id, 480_000, "2026-08-15");
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let row = view.income_rows.iter().find(|r| r.income_category_id == income_id).unwrap();
+        assert_eq!(row.actual_cents, 480_000);
+    }
+
+    #[test]
+    fn income_splits_outside_month_not_counted() {
+        let conn = test_db();
+        let income_id = first_income_category_id(&conn);
+        insert_income_split(&conn, &income_id, 480_000, "2026-07-31");
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let row = view.income_rows.iter().find(|r| r.income_category_id == income_id).unwrap();
+        assert_eq!(row.actual_cents, 0, "split in prior month must not count toward August");
+    }
+
+    #[test]
+    fn left_to_allocate_equals_income_minus_allocations() {
+        let conn = test_db();
+        let income_id = first_income_category_id(&conn);
+        insert_income_split(&conn, &income_id, 300_000, "2026-08-01");
         let flow_id = first_category_id(&conn, "flow");
         set_allocation_inner(&conn, &flow_id, "2026-08", 100_000).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        assert_eq!(view.monthly_target_cents, 300_000);
         assert_eq!(view.left_to_allocate_cents, 200_000);
+    }
+
+    #[test]
+    fn group_remaining_cents_equals_allocated_minus_spent() {
+        let conn = test_db();
+        let flow_id = first_category_id(&conn, "flow");
+        set_allocation_inner(&conn, &flow_id, "2026-08", 50_000).unwrap();
+
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        for g in &view.flow_groups {
+            assert_eq!(
+                g.remaining_cents,
+                g.total_allocated_cents - g.total_spent_cents,
+                "remaining_cents must equal allocated minus spent for group {}",
+                g.group_name
+            );
+        }
     }
 }

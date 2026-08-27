@@ -21,9 +21,10 @@ export async function updateCategory(
   return invoke("update_category", { id, name });
 }
 
-export async function upsertCategoryAssignment(
+export async function upsertSplit(
   transaction_id: string,
-  category_id: string | null,
+  target_type: string,
+  target_id: string,
 ): Promise<void> {
-  return invoke("upsert_category_assignment", { transaction_id, category_id });
+  return invoke("upsert_split", { transaction_id, target_type, target_id });
 }

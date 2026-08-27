@@ -1,11 +1,14 @@
 <script lang="ts">
   import { createCategory, updateCategory } from '$lib/categories';
   import type { CategoryRow } from '$lib/categories';
+  import { assignCategoryToGroup } from '$lib/groups';
+  import type { CategoryGroupRow } from '$lib/groups';
 
-  let { items, kind, label, onChanged }: {
+  let { items, kind, label, groups = [], onChanged }: {
     items: CategoryRow[];
     kind: 'flow' | 'sinking';
     label: string;
+    groups?: CategoryGroupRow[];
     onChanged: () => void;
   } = $props();
 
@@ -66,7 +69,31 @@
   function focusOnMount(node: HTMLElement) {
     node.focus();
   }
+
+  async function changeGroup(catId: string, groupId: string) {
+    try {
+      await assignCategoryToGroup(catId, groupId === '' ? null : groupId);
+      onChanged();
+    } catch (e) {
+      // non-fatal; onChanged not called so the stale value stays visible
+    }
+  }
 </script>
+
+{#snippet groupPicker(cat: CategoryRow)}
+  {#if groups.length > 0}
+    <select
+      class="group-select"
+      value={cat.group_id ?? ''}
+      onchange={(e) => changeGroup(cat.id, (e.currentTarget as HTMLSelectElement).value)}
+    >
+      <option value="">No group</option>
+      {#each groups as g (g.id)}
+        <option value={g.id}>{g.name}</option>
+      {/each}
+    </select>
+  {/if}
+{/snippet}
 
 <section class="section">
   <h2 class="section-title">{label}</h2>
@@ -86,6 +113,7 @@
           {/if}
         {:else}
           <button class="name-btn" onclick={() => startEdit(cat)}>{cat.name}</button>
+          {@render groupPicker(cat)}
         {/if}
       </li>
     {/each}
@@ -189,6 +217,21 @@
 
   .add-btn:hover {
     opacity: 0.85;
+  }
+
+  .group-select {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    color: var(--muted-foreground);
+    font-size: 11px;
+    padding: 3px 6px;
+    cursor: pointer;
+    outline: none;
+    flex-shrink: 0;
+  }
+
+  .group-select:focus {
+    border-color: var(--accent);
   }
 
   .error {

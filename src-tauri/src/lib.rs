@@ -5,7 +5,14 @@ mod storage;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    #[cfg(debug_assertions)]
+    let builder = builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init());
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,
@@ -22,10 +29,17 @@ pub fn run() {
             commands::categories::list_categories,
             commands::categories::create_category,
             commands::categories::update_category,
-            commands::categories::upsert_category_assignment,
+            commands::categories::upsert_split,
+            commands::categories::list_income_categories,
+            commands::categories::create_income_category,
+            commands::categories::set_income_category_hidden,
+            commands::groups::list_category_groups,
+            commands::groups::create_category_group,
+            commands::groups::update_category_group,
+            commands::groups::delete_category_group,
+            commands::groups::assign_category_to_group,
             commands::budget::get_budget_month,
             commands::budget::set_allocation,
-            commands::budget::set_monthly_target,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

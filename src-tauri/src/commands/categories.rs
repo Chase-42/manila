@@ -13,6 +13,7 @@ pub struct CategoryRow {
     pub name: String,
     #[ts(type = "'flow' | 'sinking'")]
     pub kind: String,
+    pub group_id: Option<String>,
     pub created_at: String,
 }
 
@@ -22,7 +23,9 @@ pub fn list_categories(
 ) -> Result<Vec<CategoryRow>, String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
-        .prepare("SELECT id, name, kind, created_at FROM categories ORDER BY kind, name")
+        .prepare(
+            "SELECT id, name, kind, group_id, created_at FROM categories ORDER BY kind, name",
+        )
         .map_err(|e| e.to_string())?;
     let rows = stmt
         .query_map([], |row| {
@@ -30,7 +33,8 @@ pub fn list_categories(
                 id: row.get(0)?,
                 name: row.get(1)?,
                 kind: row.get(2)?,
-                created_at: row.get(3)?,
+                group_id: row.get(3)?,
+                created_at: row.get(4)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -83,18 +87,25 @@ pub fn update_category(
     Ok(())
 }
 
-fn upsert_category_assignment_inner(
+fn upsert_split_inner(
     conn: &Connection,
     transaction_id: &str,
-    category_id: Option<&str>,
+    target_type: &str,
+    target_id: &str,
 ) -> Result<(), String> {
     conn.execute(
-        "DELETE FROM category_assignments WHERE transaction_id = ?1",
+        "DELETE FROM splits WHERE transaction_id = ?1",
         rusqlite::params![transaction_id],
     )
     .map_err(|e| e.to_string())?;
 
-    if let Some(cat_id) = category_id {
+    if !target_id.is_empty() {
+        if target_type != "envelope" && target_type != "income" {
+            return Err(format!(
+                "target_type must be 'envelope' or 'income', got '{target_type}'"
+            ));
+        }
+
         // Look up the current raw amount from the unsuperseded record.
         let amount_cents: i64 = conn
             .query_row(
@@ -110,9 +121,9 @@ fn upsert_category_assignment_inner(
 
         let id = Uuid::new_v4().to_string();
         conn.execute(
-            "INSERT INTO category_assignments (id, transaction_id, category_id, amount_cents)
-             VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params![id, transaction_id, cat_id, amount_cents],
+            "INSERT INTO splits (id, transaction_id, target_type, target_id, amount_cents)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![id, transaction_id, target_type, target_id, amount_cents],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -121,19 +132,109 @@ fn upsert_category_assignment_inner(
 }
 
 #[tauri::command]
-pub fn upsert_category_assignment(
+pub fn upsert_split(
     db: State<'_, Mutex<Connection>>,
     transaction_id: String,
-    category_id: Option<String>,
+    target_type: String,
+    target_id: String,
 ) -> Result<(), String> {
     let conn = db.lock().map_err(|e| e.to_string())?;
-    upsert_category_assignment_inner(&conn, &transaction_id, category_id.as_deref())
+    upsert_split_inner(&conn, &transaction_id, &target_type, &target_id)
+}
+
+#[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/IncomeCategoryItem.ts")]
+pub struct IncomeCategoryItem {
+    pub id: String,
+    pub name: String,
+    pub hidden: bool,
+}
+
+fn list_income_categories_inner(conn: &Connection) -> Result<Vec<IncomeCategoryItem>, String> {
+    let mut stmt = conn
+        .prepare("SELECT id, name, hidden FROM income_categories ORDER BY created_at")
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(IncomeCategoryItem {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                hidden: row.get::<_, i64>(2)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+    Ok(rows)
+}
+
+fn create_income_category_inner(conn: &Connection, name: &str) -> Result<String, String> {
+    let trimmed = name.trim().to_string();
+    if trimmed.is_empty() {
+        return Err("Income category name cannot be blank".into());
+    }
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO income_categories (id, name, hidden, created_at) VALUES (?1, ?2, 0, ?3)",
+        rusqlite::params![id, trimmed, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+fn set_income_category_hidden_inner(
+    conn: &Connection,
+    id: &str,
+    hidden: bool,
+) -> Result<(), String> {
+    let rows = conn
+        .execute(
+            "UPDATE income_categories SET hidden = ?1 WHERE id = ?2",
+            rusqlite::params![i64::from(hidden), id],
+        )
+        .map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err(format!("Income category {id} not found"));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn list_income_categories(
+    db: State<'_, Mutex<Connection>>,
+) -> Result<Vec<IncomeCategoryItem>, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    list_income_categories_inner(&conn)
+}
+
+#[tauri::command]
+pub fn create_income_category(
+    db: State<'_, Mutex<Connection>>,
+    name: String,
+) -> Result<String, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    create_income_category_inner(&conn, &name)
+}
+
+#[tauri::command]
+pub fn set_income_category_hidden(
+    db: State<'_, Mutex<Connection>>,
+    id: String,
+    hidden: bool,
+) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    set_income_category_hidden_inner(&conn, &id, hidden)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::{db::open_connection, migrations::run_migrations, seed::seed_categories};
+    use crate::storage::{
+        db::open_connection,
+        migrations::run_migrations,
+        seed::{seed_categories, seed_category_groups, seed_income_categories},
+    };
     use std::sync::Mutex;
 
     fn insert_transaction_with_record(conn: &Connection, amount_cents: i64) -> String {
@@ -165,6 +266,8 @@ mod tests {
         let mut conn = open_connection(":memory:").unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
+        seed_category_groups(&conn).unwrap();
+        seed_income_categories(&conn).unwrap();
         Mutex::new(conn)
     }
 
@@ -269,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn upsert_assignment_inserts_row() {
+    fn upsert_split_inserts_row() {
         let db = test_db();
         let conn = db.lock().unwrap();
         let tx_id = insert_transaction_with_record(&conn, -1500);
@@ -277,30 +380,30 @@ mod tests {
             .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
             .unwrap();
 
-        upsert_category_assignment_inner(&conn, &tx_id, Some(&cat_id)).unwrap();
+        upsert_split_inner(&conn, &tx_id, "envelope", &cat_id).unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                "SELECT COUNT(*) FROM splits WHERE transaction_id = ?1",
                 rusqlite::params![tx_id],
                 |r| r.get(0),
             )
             .unwrap();
         assert_eq!(count, 1);
 
-        let (stored_cat, stored_amount): (String, i64) = conn
+        let (stored_target, stored_amount): (String, i64) = conn
             .query_row(
-                "SELECT category_id, amount_cents FROM category_assignments WHERE transaction_id = ?1",
+                "SELECT target_id, amount_cents FROM splits WHERE transaction_id = ?1",
                 rusqlite::params![tx_id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap();
-        assert_eq!(stored_cat, cat_id);
+        assert_eq!(stored_target, cat_id);
         assert_eq!(stored_amount, -1500);
     }
 
     #[test]
-    fn upsert_assignment_replaces_existing() {
+    fn upsert_split_replaces_existing() {
         let db = test_db();
         let conn = db.lock().unwrap();
         let tx_id = insert_transaction_with_record(&conn, -2000);
@@ -314,30 +417,30 @@ mod tests {
             .collect();
         let (cat_a, cat_b) = (&cats[0], &cats[1]);
 
-        upsert_category_assignment_inner(&conn, &tx_id, Some(cat_a)).unwrap();
-        upsert_category_assignment_inner(&conn, &tx_id, Some(cat_b)).unwrap();
+        upsert_split_inner(&conn, &tx_id, "envelope", cat_a).unwrap();
+        upsert_split_inner(&conn, &tx_id, "envelope", cat_b).unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                "SELECT COUNT(*) FROM splits WHERE transaction_id = ?1",
                 rusqlite::params![tx_id],
                 |r| r.get(0),
             )
             .unwrap();
         assert_eq!(count, 1);
 
-        let stored_cat: String = conn
+        let stored_target: String = conn
             .query_row(
-                "SELECT category_id FROM category_assignments WHERE transaction_id = ?1",
+                "SELECT target_id FROM splits WHERE transaction_id = ?1",
                 rusqlite::params![tx_id],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(&stored_cat, cat_b);
+        assert_eq!(&stored_target, cat_b);
     }
 
     #[test]
-    fn upsert_assignment_none_clears() {
+    fn upsert_split_empty_target_clears() {
         let db = test_db();
         let conn = db.lock().unwrap();
         let tx_id = insert_transaction_with_record(&conn, -500);
@@ -345,16 +448,83 @@ mod tests {
             .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
             .unwrap();
 
-        upsert_category_assignment_inner(&conn, &tx_id, Some(&cat_id)).unwrap();
-        upsert_category_assignment_inner(&conn, &tx_id, None).unwrap();
+        upsert_split_inner(&conn, &tx_id, "envelope", &cat_id).unwrap();
+        upsert_split_inner(&conn, &tx_id, "", "").unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM category_assignments WHERE transaction_id = ?1",
+                "SELECT COUNT(*) FROM splits WHERE transaction_id = ?1",
                 rusqlite::params![tx_id],
                 |r| r.get(0),
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn upsert_split_rejects_invalid_target_type() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_record(&conn, -500);
+        let result = upsert_split_inner(&conn, &tx_id, "bogus", "some-id");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn export_bindings_incomecategoryitem() {
+        <IncomeCategoryItem as TS>::export_all().unwrap();
+    }
+
+    #[test]
+    fn list_income_categories_returns_seeded() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let result = list_income_categories_inner(&conn).unwrap();
+        assert_eq!(result.len(), 4);
+        assert!(result.iter().all(|r| !r.hidden));
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"Paycheck"));
+    }
+
+    #[test]
+    fn create_income_category_inserts() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let id = create_income_category_inner(&conn, "Rental Income").unwrap();
+        assert!(!id.is_empty());
+    }
+
+    #[test]
+    fn create_income_category_rejects_blank() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let result = create_income_category_inner(&conn, "   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn set_income_category_hidden_toggles_flag() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let id: String = conn
+            .query_row("SELECT id FROM income_categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        set_income_category_hidden_inner(&conn, &id, true).unwrap();
+        let hidden: i64 = conn
+            .query_row(
+                "SELECT hidden FROM income_categories WHERE id = ?1",
+                rusqlite::params![id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(hidden, 1);
+    }
+
+    #[test]
+    fn set_income_category_hidden_errors_on_unknown_id() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let result = set_income_category_hidden_inner(&conn, "no-such-id", true);
+        assert!(result.is_err());
     }
 }

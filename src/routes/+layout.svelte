@@ -12,6 +12,9 @@
   let dbReady = $state(false);
 
   onMount(async () => {
+    if (import.meta.env.DEV) {
+      await import('@wdio/tauri-plugin');
+    }
     try {
       await invoke("init_db");
       dbReady = true;

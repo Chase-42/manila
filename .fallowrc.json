@@ -1,0 +1,34 @@
+{
+  // This file is JSONC: fallow reads these comments; generic JSON tools may not.
+  "$schema": "./node_modules/fallow/schema.json",
+  // SvelteKit routes are auto-detected by the Svelte plugin; extra entries for
+  // any lib modules that are imported only from Tauri commands (not from routes).
+  "entry": [
+    "src/lib/**/*.ts"
+  ],
+  "duplicates": {
+    // Hide pair-only clones; focus on widespread copy-paste
+    // worth refactoring. Lower to 2 to report every duplicate pair.
+    "minOccurrences": 3
+    // Common additions (uncomment to enable):
+    // "ignore": [
+    //   "**/lib/**",          // for repos that publish transpiled output to lib/
+    //   "**/legacy/**",       // for repos with legacy-build artifacts
+    //   "**/__generated__/**", // Relay, GraphQL Code Generator
+    //   "**/generated/**"     // OpenAPI, Protobuf codegen
+    // ]
+  },
+  // Tauri plugins are consumed by Rust only; Fallow can't see the Rust side.
+  // UI and build packages live in devDependencies by convention for a static
+  // Tauri build where nothing runs server-side.
+  "ignoreDependencies": [
+    "@tauri-apps/plugin-opener",
+    "@lucide/svelte",
+    "svelte",
+    "tailwind-variants",
+    "tailwindcss"
+  ],
+  "rules": {
+    "unused-dependencies": "warn"
+  }
+}

@@ -6,10 +6,14 @@ import type { ReallocationEntry } from "./ReallocationEntry";
 
 export type BudgetMonthView = { month: string, 
 /**
- * SUM(income splits for month) - SUM(allocation_events for month)
+ * income splits for month minus user-driven allocations (excludes carry events)
  */
 left_to_allocate_cents: number, income_rows: Array<IncomeCategoryRow>, flow_groups: Array<BudgetGroupView>, flow_ungrouped: Array<BudgetCategoryRow>, sinking_groups: Array<BudgetGroupView>, sinking_ungrouped: Array<BudgetCategoryRow>, 
 /**
  * reallocation pairs for this month, newest first; one entry per pair (source side)
  */
-reallocation_log: Array<ReallocationEntry>, };
+reallocation_log: Array<ReallocationEntry>, 
+/**
+ * true once close_month has been called for this month
+ */
+is_closed: boolean, };

@@ -10,6 +10,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (5, MIGRATION_005),
     (6, MIGRATION_006),
     (7, MIGRATION_007),
+    (8, MIGRATION_008),
 ];
 
 const MIGRATION_001: &str = "
@@ -167,6 +168,13 @@ const MIGRATION_007: &str = "
     DROP TABLE allocation_events;
 
     ALTER TABLE allocation_events_new RENAME TO allocation_events;
+";
+
+const MIGRATION_008: &str = "
+    CREATE TABLE month_closes (
+        month      TEXT NOT NULL PRIMARY KEY,
+        closed_at  TEXT NOT NULL
+    );
 ";
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
@@ -377,6 +385,22 @@ mod tests {
                 "allocation_events.{col} should still exist after migration 7"
             );
         }
+    }
+
+    #[test]
+    fn migration_008_creates_month_closes() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='month_closes'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(exists, "month_closes table should exist after migration 8");
     }
 
     #[test]

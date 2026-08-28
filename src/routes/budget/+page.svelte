@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { ChevronRight, ChevronDown, ArrowLeftRight } from '@lucide/svelte';
-  import { getBudgetMonth, setAllocation, parseCentsFromString } from '$lib/budget';
+  import { getBudgetMonth, setAllocation, parseCentsFromString, closeMonth } from '$lib/budget';
   import { formatCents } from '$lib/money';
   import type { BudgetMonthView, BudgetGroupView, BudgetCategoryRow } from '$lib/budget';
+  import * as Dialog from '$lib/components/ui/dialog';
+  import { Button } from '$lib/components/ui/button';
   import ReallocateDialog from '$lib/components/ReallocateDialog.svelte';
 
   const today = new Date();
@@ -20,6 +22,10 @@
   let reallocInitialTo = $state<string | undefined>(undefined);
   // Increment to force remount of ReallocateDialog on each open, giving it fresh state from props.
   let reallocKey = $state(0);
+
+  let closeOpen = $state(false);
+  let closeError = $state<string | null>(null);
+  let closeInProgress = $state(false);
 
   function toMonthLabel(m: string): string {
     const [y, mo] = m.split('-').map(Number);
@@ -92,6 +98,21 @@
     reallocOpen = true;
   }
 
+  async function confirmClose() {
+    closeError = null;
+    closeInProgress = true;
+    try {
+      await closeMonth(selectedMonth);
+      closeOpen = false;
+      selectedMonth = shiftMonth(selectedMonth, 1);
+      void load();
+    } catch (err) {
+      closeError = err instanceof Error ? err.message : String(err);
+    } finally {
+      closeInProgress = false;
+    }
+  }
+
   let totalIncome = $derived(view?.income_rows.reduce((s, r) => s + r.actual_cents, 0) ?? 0);
 
   let totalSpent = $derived(
@@ -117,9 +138,14 @@
 </script>
 
 {#snippet expenseCatRow(cat: BudgetCategoryRow)}
-  {@const remaining = cat.allocated_cents - cat.spent_cents}
+  {@const remaining = cat.carried_in_cents + cat.allocated_cents - cat.spent_cents}
   <div class="expense-row">
-    <span class="cat-name cat-indent">{cat.category_name}</span>
+    <span class="cat-name-col cat-indent">
+      <span class="cat-name">{cat.category_name}</span>
+      {#if cat.carried_in_cents < 0}
+        <span class="carry-label">Carried: {formatCents(cat.carried_in_cents)}</span>
+      {/if}
+    </span>
     <input
       class="alloc-input"
       type="text"
@@ -286,6 +312,37 @@
       <span class="bar-amount">{formatCents(totalSpent)}</span>
     </div>
   </div>
+  {#if view && !view.is_closed && selectedMonth <= CURRENT_MONTH}
+    <div class="close-month-section">
+      <Dialog.Root bind:open={closeOpen}>
+        <Dialog.Trigger>
+          {#snippet child({ props })}
+            <button {...props} class="close-month-btn" onclick={() => { closeError = null; closeOpen = true; }}>
+              Close Month
+            </button>
+          {/snippet}
+        </Dialog.Trigger>
+        <Dialog.Content>
+          <Dialog.Header>
+            <Dialog.Title>Close {toMonthLabel(selectedMonth)}</Dialog.Title>
+            <Dialog.Description>
+              Flow category surpluses return to unallocated. Any overspent flow category
+              carries its debt forward to next month. This cannot be undone.
+            </Dialog.Description>
+          </Dialog.Header>
+          {#if closeError}
+            <p class="close-error">{closeError}</p>
+          {/if}
+          <Dialog.Footer>
+            <Button variant="outline" onclick={() => { closeOpen = false; }}>Cancel</Button>
+            <Button onclick={confirmClose} disabled={closeInProgress}>
+              {closeInProgress ? 'Closing...' : 'Close Month'}
+            </Button>
+          </Dialog.Footer>
+        </Dialog.Content>
+      </Dialog.Root>
+    </div>
+  {/if}
 {/snippet}
 
 <div class="page">
@@ -474,6 +531,13 @@
   .expense-row { padding: 5px 0; }
   .sinking-row { padding: 5px 0; }
 
+  .cat-name-col {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
   .cat-name {
     font-size: 13px;
     font-weight: 400;
@@ -481,6 +545,14 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .carry-label {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 10px;
+    color: var(--destructive);
+    opacity: 0.8;
   }
 
   .cat-indent { padding-left: 20px; }
@@ -688,5 +760,36 @@
     font-variant-numeric: tabular-nums;
     font-size: 12px;
     color: var(--foreground);
+  }
+
+  /* Close Month */
+
+  .close-month-section {
+    margin-top: auto;
+    padding-top: 8px;
+  }
+
+  .close-month-btn {
+    width: 100%;
+    padding: 7px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted-foreground);
+    background: transparent;
+    border: 1px solid var(--border);
+    cursor: pointer;
+    text-align: center;
+    transition: color 0.12s, border-color 0.12s;
+  }
+
+  .close-month-btn:hover {
+    color: var(--foreground);
+    border-color: var(--foreground);
+  }
+
+  .close-error {
+    font-size: 12px;
+    color: var(--destructive);
+    margin: 0 0 8px;
   }
 </style>

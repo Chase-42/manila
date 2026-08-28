@@ -6,10 +6,14 @@ export type BudgetCategoryRow = { category_id: string, category_name: string,
  */
 kind: 'flow' | 'sinking', 
 /**
- * flow: current-month allocation; sinking: all-time cumulative allocation
+ * user-driven allocations this month (excludes carry events); sinking: all-time cumulative
  */
 allocated_cents: number, 
 /**
  * flow: current-month spending; sinking: all-time cumulative spending; always >= 0
  */
-spent_cents: number, };
+spent_cents: number, 
+/**
+ * debt carried in from a prior month close; 0 unless this category had a negative available
+ */
+carried_in_cents: number, };

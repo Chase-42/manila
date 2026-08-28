@@ -24,12 +24,15 @@ pub struct BudgetCategoryRow {
     /// "flow" | "sinking"
     #[ts(type = "'flow' | 'sinking'")]
     pub kind: String,
-    /// flow: current-month allocation; sinking: all-time cumulative allocation
+    /// user-driven allocations this month (excludes carry events); sinking: all-time cumulative
     #[ts(type = "number")]
     pub allocated_cents: i64,
     /// flow: current-month spending; sinking: all-time cumulative spending; always >= 0
     #[ts(type = "number")]
     pub spent_cents: i64,
+    /// debt carried in from a prior month close; 0 unless this category had a negative available
+    #[ts(type = "number")]
+    pub carried_in_cents: i64,
 }
 
 #[derive(Serialize, TS)]
@@ -67,7 +70,7 @@ pub struct ReallocationEntry {
 #[ts(export, export_to = "../../src/lib/generated/BudgetMonthView.ts")]
 pub struct BudgetMonthView {
     pub month: String,
-    /// SUM(income splits for month) - SUM(allocation_events for month)
+    /// income splits for month minus user-driven allocations (excludes carry events)
     #[ts(type = "number")]
     pub left_to_allocate_cents: i64,
     pub income_rows: Vec<IncomeCategoryRow>,
@@ -77,6 +80,8 @@ pub struct BudgetMonthView {
     pub sinking_ungrouped: Vec<BudgetCategoryRow>,
     /// reallocation pairs for this month, newest first; one entry per pair (source side)
     pub reallocation_log: Vec<ReallocationEntry>,
+    /// true once close_month has been called for this month
+    pub is_closed: bool,
 }
 
 struct RawBudgetRow {
@@ -88,6 +93,7 @@ struct RawBudgetRow {
     group_sort_order: Option<i64>,
     allocated_cents: i64,
     spent_cents: i64,
+    carried_in_cents: i64,
 }
 
 #[tauri::command]
@@ -115,6 +121,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                     SELECT COALESCE(SUM(ae.amount_cents), 0)
                     FROM allocation_events ae
                     WHERE ae.category_id = c.id
+                      AND ae.kind != 'carry'
                       AND (c.kind = 'sinking' OR ae.month = ?1)
                 ) AS allocated_cents,
                 (
@@ -129,7 +136,14 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                           WHERE rr2.supersedes_id = rr.id
                       )
                       AND (c.kind = 'sinking' OR rr.date LIKE ?2)
-                ) AS spent_cents
+                ) AS spent_cents,
+                (
+                    SELECT COALESCE(SUM(ae.amount_cents), 0)
+                    FROM allocation_events ae
+                    WHERE ae.category_id = c.id
+                      AND ae.month = ?1
+                      AND ae.kind = 'carry'
+                ) AS carried_in_cents
              FROM categories c
              LEFT JOIN category_groups cg ON cg.id = c.group_id
              ORDER BY c.kind, cg.sort_order NULLS LAST, c.name",
@@ -147,6 +161,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                 group_sort_order: row.get(5)?,
                 allocated_cents: row.get(6)?,
                 spent_cents: row.get(7)?,
+                carried_in_cents: row.get(8)?,
             })
         })
         .map_err(|e| e.to_string())?
@@ -165,6 +180,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
             kind: row.kind.clone(),
             allocated_cents: row.allocated_cents,
             spent_cents: row.spent_cents,
+            carried_in_cents: row.carried_in_cents,
         };
 
         match row.kind.as_str() {
@@ -255,17 +271,28 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
 
     let total_income_cents: i64 = income_rows.iter().map(|r| r.actual_cents).sum();
 
+    // Exclude carry events: they are structural (written by month close), not user-driven.
+    // Including them would inflate left_to_allocate when a prior month had flow debt.
     let total_month_allocated: i64 = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM allocation_events
-             WHERE month = ?1",
+             WHERE month = ?1 AND kind != 'carry'",
             rusqlite::params![month],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
 
     let left_to_allocate_cents = total_income_cents - total_month_allocated;
+
+    let is_closed: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM month_closes WHERE month = ?1",
+            rusqlite::params![month],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
 
     // Query only the negative-amount side of each reallocate pair to avoid duplicates.
     let mut realloc_stmt = conn
@@ -307,6 +334,7 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
         sinking_groups,
         sinking_ungrouped,
         reallocation_log,
+        is_closed,
     })
 }
 
@@ -352,6 +380,109 @@ fn set_allocation_inner(
              (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
          VALUES (?1, ?2, ?3, ?4, 'allocate', NULL, NULL, ?5)",
         rusqlite::params![id, category_id, month, delta, now],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn next_month(month: &str) -> Result<String, String> {
+    let (year_str, mon_str) = month
+        .split_once('-')
+        .ok_or_else(|| format!("invalid month format: {month}"))?;
+    let year: i32 = year_str
+        .parse()
+        .map_err(|_| format!("invalid year in: {month}"))?;
+    let mon: u32 = mon_str
+        .parse()
+        .map_err(|_| format!("invalid month in: {month}"))?;
+    if mon == 12 {
+        Ok(format!("{:04}-01", year + 1))
+    } else {
+        Ok(format!("{year:04}-{:02}", mon + 1))
+    }
+}
+
+#[tauri::command]
+pub fn close_month(db: State<'_, Mutex<Connection>>, month: String) -> Result<(), String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    close_month_inner(&conn, &month)
+}
+
+fn close_month_inner(conn: &Connection, month: &str) -> Result<(), String> {
+    // Validate YYYY-MM format
+    if month.len() != 7 || !month.chars().nth(4).is_some_and(|c| c == '-') {
+        return Err(format!("invalid month format '{month}'; expected YYYY-MM"));
+    }
+
+    // Idempotency guard
+    let already_closed: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM month_closes WHERE month = ?1",
+            rusqlite::params![month],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|e| e.to_string())?
+        > 0;
+    if already_closed {
+        return Err(format!("month {month} is already closed"));
+    }
+
+    let target_month = next_month(month)?;
+    let now = Utc::now().to_rfc3339();
+    let month_prefix = format!("{month}-%");
+
+    // Compute available balance for each flow category and write carry events for debt
+    let mut stmt = conn
+        .prepare(
+            "SELECT
+                c.id,
+                (
+                    SELECT COALESCE(SUM(ae.amount_cents), 0)
+                    FROM allocation_events ae
+                    WHERE ae.category_id = c.id AND ae.month = ?1
+                ) +
+                (
+                    SELECT COALESCE(SUM(s.amount_cents), 0)
+                    FROM splits s
+                    JOIN raw_records rr ON rr.transaction_id = s.transaction_id
+                    WHERE s.target_id = c.id
+                      AND s.target_type = 'envelope'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
+                      )
+                      AND rr.date LIKE ?2
+                ) AS available_cents
+             FROM categories c
+             WHERE c.kind = 'flow'",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let flow_rows: Vec<(String, i64)> = stmt
+        .query_map(rusqlite::params![month, month_prefix], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .map_err(|e| e.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())?;
+
+    for (category_id, available) in flow_rows {
+        if available < 0 {
+            let carry_id = Uuid::new_v4().to_string();
+            conn.execute(
+                "INSERT INTO allocation_events
+                     (id, category_id, month, amount_cents, kind, counterpart_category_id, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4, 'carry', NULL, NULL, ?5)",
+                rusqlite::params![carry_id, category_id, target_month, available, now],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Mark month as closed
+    conn.execute(
+        "INSERT INTO month_closes (month, closed_at) VALUES (?1, ?2)",
+        rusqlite::params![month, now],
     )
     .map_err(|e| e.to_string())?;
 
@@ -900,6 +1031,202 @@ mod tests {
             view.reallocation_log.is_empty(),
             "reallocation in July must not appear in August log"
         );
+    }
+
+    fn insert_expense_split(conn: &Connection, cat_id: &str, amount_cents: i64, date: &str) {
+        let account_id = Uuid::new_v4().to_string();
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        let split_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES (?1, 'Bank', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id, date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, 'Purchase', '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("src|{}", rr_id), date, amount_cents],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO splits (id, transaction_id, target_type, target_id, amount_cents)
+             VALUES (?1, ?2, 'envelope', ?3, ?4)",
+            rusqlite::params![split_id, tx_id, cat_id, amount_cents],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn get_budget_month_carried_in_zero_before_close() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        set_allocation_inner(&conn, &cat_id, "2026-08", 20_000).unwrap();
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        let row = find_category(&view, &cat_id);
+        assert_eq!(row.carried_in_cents, 0, "no carry before any month close");
+    }
+
+    #[test]
+    fn get_budget_month_carried_in_populated_after_close() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        // Overspend: allocate 100, spend 200 => available = -100
+        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        insert_expense_split(&conn, &cat_id, -20_000, "2026-08-15");
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        // September view should show carry debt, but allocated = 0 (user hasn't set anything yet)
+        let view = get_budget_month_inner(&conn, "2026-09").unwrap();
+        let row = find_category(&view, &cat_id);
+        assert_eq!(row.carried_in_cents, -10_000);
+        assert_eq!(
+            row.allocated_cents, 0,
+            "carry must not inflate allocated_cents"
+        );
+    }
+
+    #[test]
+    fn left_to_allocate_not_reduced_by_carry_events() {
+        let conn = test_db();
+        let income_id = first_income_category_id(&conn);
+        let cat_id = first_category_id(&conn, "flow");
+        // Record $100 income in August, overspend by $50, close month
+        insert_income_split(&conn, &income_id, 10_000, "2026-08-01");
+        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        insert_expense_split(&conn, &cat_id, -15_000, "2026-08-10");
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        // Record $200 income in September
+        insert_income_split(&conn, &income_id, 20_000, "2026-09-01");
+        let view = get_budget_month_inner(&conn, "2026-09").unwrap();
+        // LTA should be $200 (income) - $0 (no user allocations yet) = $200
+        // The -$50 carry event must NOT reduce LTA
+        assert_eq!(
+            view.left_to_allocate_cents, 20_000,
+            "carry events must not reduce left_to_allocate"
+        );
+    }
+
+    #[test]
+    fn get_budget_month_is_closed_false_before_close() {
+        let conn = test_db();
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert!(!view.is_closed);
+    }
+
+    #[test]
+    fn get_budget_month_is_closed_true_after_close() {
+        let conn = test_db();
+        close_month_inner(&conn, "2026-08").unwrap();
+        let view = get_budget_month_inner(&conn, "2026-08").unwrap();
+        assert!(view.is_closed);
+    }
+
+    #[test]
+    fn close_month_writes_carry_for_flow_debt() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        // Allocate 300 but spend 400 (overspend by 100)
+        set_allocation_inner(&conn, &cat_id, "2026-08", 30_000).unwrap();
+        insert_expense_split(&conn, &cat_id, -40_000, "2026-08-15");
+
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        let carry: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM allocation_events
+                 WHERE category_id = ?1 AND month = '2026-09' AND kind = 'carry'",
+                rusqlite::params![cat_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            carry, -10_000,
+            "carry should equal the debt (available = 30000 - 40000 = -10000)"
+        );
+    }
+
+    #[test]
+    fn close_month_no_carry_for_flow_surplus() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        // Allocate 500, spend 300 (surplus of 200 - no carry event)
+        set_allocation_inner(&conn, &cat_id, "2026-08", 50_000).unwrap();
+        insert_expense_split(&conn, &cat_id, -30_000, "2026-08-10");
+
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM allocation_events WHERE kind = 'carry'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "no carry event for a flow category with positive available"
+        );
+    }
+
+    #[test]
+    fn close_month_no_carry_for_sinking() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "sinking");
+        // Even if sinking is 0 allocated and 0 spent, no carry event should be written
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM allocation_events WHERE category_id = ?1 AND kind = 'carry'",
+                rusqlite::params![cat_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "sinking categories must never receive carry events from month close"
+        );
+    }
+
+    #[test]
+    fn close_month_returns_error_when_already_closed() {
+        let conn = test_db();
+        close_month_inner(&conn, "2026-08").unwrap();
+        let result = close_month_inner(&conn, "2026-08");
+        assert!(
+            result.is_err(),
+            "second close of same month must return an error"
+        );
+    }
+
+    #[test]
+    fn close_month_carry_amount_matches_available() {
+        let conn = test_db();
+        let cat_id = first_category_id(&conn, "flow");
+        // Allocate 100, spend 250 => available = -150
+        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        insert_expense_split(&conn, &cat_id, -25_000, "2026-08-20");
+
+        close_month_inner(&conn, "2026-08").unwrap();
+
+        let carry: i64 = conn
+            .query_row(
+                "SELECT amount_cents FROM allocation_events
+                 WHERE category_id = ?1 AND month = '2026-09' AND kind = 'carry'",
+                rusqlite::params![cat_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(carry, -15_000);
     }
 
     #[test]

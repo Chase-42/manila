@@ -23,6 +23,10 @@ export async function setAllocation(
   });
 }
 
+export async function closeMonth(month: string): Promise<void> {
+  return invoke("close_month", { month });
+}
+
 export async function reallocate(
   fromCategoryId: string,
   toCategoryId: string,

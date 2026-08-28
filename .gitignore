@@ -12,11 +12,3 @@ vite.config.ts.timestamp-*
 # Rust/Tauri build output
 src-tauri/target/
 
-# local workflow files
-.agents/
-.claude/
-blueprint/
-CLAUDE.md
-AGENTS.md
-.fallow/
-.mcp.json

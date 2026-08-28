@@ -4,6 +4,8 @@ use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 
+use crate::commands::search::rebuild_fts;
+
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/TransactionRow.ts")]
 pub struct TransactionRow {
@@ -128,6 +130,8 @@ fn upsert_transaction_meta_inner(conn: &Connection, args: &UpsertMetaArgs) -> Re
         rusqlite::params![args.transaction_id, args.notes, tags_json, reviewed_int],
     )
     .map_err(|e| e.to_string())?;
+
+    rebuild_fts(conn).map_err(|e| e.to_string())?;
 
     Ok(())
 }

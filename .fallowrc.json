@@ -26,7 +26,14 @@
     "@lucide/svelte",
     "svelte",
     "tailwind-variants",
-    "tailwindcss"
+    "tailwindcss",
+    // wdio packages are referenced by string ID in e2e/wdio.conf.js; fallow cannot trace string refs.
+    // @wdio/tauri-plugin is imported behind import.meta.env.DEV and dead-code-eliminated in prod.
+    "@wdio/local-runner",
+    "@wdio/mocha-framework",
+    "@wdio/spec-reporter",
+    "@wdio/tauri-service",
+    "@wdio/tauri-plugin"
   ],
   "rules": {
     "unused-dependencies": "warn"

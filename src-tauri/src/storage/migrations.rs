@@ -11,6 +11,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (6, MIGRATION_006),
     (7, MIGRATION_007),
     (8, MIGRATION_008),
+    (9, MIGRATION_009),
 ];
 
 const MIGRATION_001: &str = "
@@ -174,6 +175,22 @@ const MIGRATION_008: &str = "
     CREATE TABLE month_closes (
         month      TEXT NOT NULL PRIMARY KEY,
         closed_at  TEXT NOT NULL
+    );
+";
+
+const MIGRATION_009: &str = "
+    CREATE VIRTUAL TABLE transactions_fts USING fts5(
+        description,
+        notes,
+        transaction_id UNINDEXED
+    );
+
+    INSERT INTO transactions_fts (rowid, description, notes, transaction_id)
+    SELECT rr.rowid, rr.description, COALESCE(tm.notes, ''), rr.transaction_id
+    FROM raw_records rr
+    LEFT JOIN transaction_meta tm ON tm.transaction_id = rr.transaction_id
+    WHERE NOT EXISTS (
+        SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
     );
 ";
 
@@ -401,6 +418,25 @@ mod tests {
             .unwrap()
             > 0;
         assert!(exists, "month_closes table should exist after migration 8");
+    }
+
+    #[test]
+    fn migration_009_creates_transactions_fts() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='transactions_fts'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(
+            exists,
+            "transactions_fts virtual table should exist after migration 9"
+        );
     }
 
     #[test]

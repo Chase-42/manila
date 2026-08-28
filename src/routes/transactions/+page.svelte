@@ -1,20 +1,23 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listTransactions } from '$lib/transactions';
+  import { listTransactions, searchTransactions } from '$lib/transactions';
   import { formatCents } from '$lib/money';
   import type { TransactionRow } from '$lib/generated/TransactionRow';
   import TransactionDetail from '$lib/components/TransactionDetail.svelte';
   import { ArrowLeftRight } from '@lucide/svelte';
 
   let transactions = $state<TransactionRow[]>([]);
+  let displayTransactions = $state<TransactionRow[]>([]);
   let loading = $state(true);
   let selected = $state<TransactionRow | undefined>(undefined);
   let detailOpen = $state(false);
+  let query = $state('');
 
   async function load() {
     loading = true;
     try {
       transactions = await listTransactions();
+      displayTransactions = transactions;
     } catch {
       // No Tauri backend in pnpm dev
     } finally {
@@ -23,6 +26,22 @@
   }
 
   onMount(load);
+
+  $effect(() => {
+    const q = query.trim();
+    const t = setTimeout(async () => {
+      if (q === '') {
+        displayTransactions = transactions;
+      } else {
+        try {
+          displayTransactions = await searchTransactions(q);
+        } catch {
+          // No Tauri backend in pnpm dev
+        }
+      }
+    }, 300);
+    return () => clearTimeout(t);
+  });
 
   function openDetail(tx: TransactionRow) {
     selected = tx;
@@ -51,6 +70,60 @@
   }
 </script>
 
+{#snippet subtitle()}
+  {#if !loading}
+    {#if query.trim()}
+      <p class="subtitle">{displayTransactions.length} result{displayTransactions.length === 1 ? '' : 's'} for "{query}"</p>
+    {:else}
+      <p class="subtitle">{transactions.length} transaction{transactions.length === 1 ? '' : 's'}</p>
+    {/if}
+  {/if}
+{/snippet}
+
+{#snippet table()}
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th class="date-col">Date</th>
+          <th>Merchant</th>
+          <th>Category</th>
+          <th class="amount-col">Amount</th>
+          <th class="reviewed-col">Reviewed</th>
+        </tr>
+      </thead>
+      <tbody>
+        {#each displayTransactions as tx (tx.id)}
+          <tr onclick={() => openDetail(tx)}>
+            <td class="date">{formatDate(tx.date)}</td>
+            <td class="merchant">
+              <span class="merchant-name">{tx.description}</span>
+              <span class="merchant-account">{tx.account_name}</span>
+            </td>
+            <td class="category-cell">
+              <span class="category-chip" class:assigned={categoryAssigned(tx.category_name)}>
+                {categoryLabel(tx.category_name)}
+              </span>
+            </td>
+            <td
+              class="amount"
+              class:negative={tx.amount_cents < 0}
+              class:positive={tx.amount_cents > 0}
+            >
+              {tx.amount_cents > 0 ? '+' : ''}{formatCents(tx.amount_cents)}
+            </td>
+            <td class="reviewed-cell">
+              {#if tx.reviewed}
+                <span class="reviewed-badge">&#10003;</span>
+              {/if}
+            </td>
+          </tr>
+        {/each}
+      </tbody>
+    </table>
+  </div>
+{/snippet}
+
 {#if selected}
   <TransactionDetail
     transaction={selected}
@@ -61,10 +134,18 @@
 
 <div class="page">
   <header class="page-header">
-    <h1 class="heading">Transactions</h1>
-    {#if !loading}
-      <p class="subtitle">{transactions.length} transaction{transactions.length === 1 ? '' : 's'}</p>
-    {/if}
+    <div class="header-top">
+      <div>
+        <h1 class="heading">Transactions</h1>
+        {@render subtitle()}
+      </div>
+    </div>
+    <input
+      type="search"
+      class="search-input"
+      placeholder="Search transactions..."
+      bind:value={query}
+    />
   </header>
 
   {#if loading}
@@ -80,48 +161,12 @@
       <p class="empty-body">Import a file from an account to get started.</p>
       <a href="/accounts" class="cta-link">Go to Accounts</a>
     </div>
-  {:else}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th class="date-col">Date</th>
-            <th>Merchant</th>
-            <th>Category</th>
-            <th class="amount-col">Amount</th>
-            <th class="reviewed-col">Reviewed</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each transactions as tx (tx.id)}
-            <tr onclick={() => openDetail(tx)}>
-              <td class="date">{formatDate(tx.date)}</td>
-              <td class="merchant">
-                <span class="merchant-name">{tx.description}</span>
-                <span class="merchant-account">{tx.account_name}</span>
-              </td>
-              <td class="category-cell">
-                <span class="category-chip" class:assigned={categoryAssigned(tx.category_name)}>
-                  {categoryLabel(tx.category_name)}
-                </span>
-              </td>
-              <td
-                class="amount"
-                class:negative={tx.amount_cents < 0}
-                class:positive={tx.amount_cents > 0}
-              >
-                {tx.amount_cents > 0 ? '+' : ''}{formatCents(tx.amount_cents)}
-              </td>
-              <td class="reviewed-cell">
-                {#if tx.reviewed}
-                  <span class="reviewed-badge">&#10003;</span>
-                {/if}
-              </td>
-            </tr>
-          {/each}
-        </tbody>
-      </table>
+  {:else if displayTransactions.length === 0}
+    <div class="empty-state">
+      <p class="no-results">No results for "<span class="query-text">{query}</span>"</p>
     </div>
+  {:else}
+    {@render table()}
   {/if}
 </div>
 
@@ -133,9 +178,18 @@
   }
 
   .page-header {
-    padding: 28px 32px 20px;
+    padding: 28px 32px 16px;
     background: var(--card);
     border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
   }
 
   .heading {
@@ -150,6 +204,25 @@
     margin: 0;
     font-size: 12px;
     color: var(--muted-foreground);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--input);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+    font-size: 13px;
+    font-family: var(--font-sans);
+    outline: none;
+  }
+
+  .search-input::placeholder {
+    color: var(--muted-foreground);
+  }
+
+  .search-input:focus {
+    border-color: var(--primary);
   }
 
   .table-wrap {
@@ -265,5 +338,46 @@
     background: var(--muted);
     color: var(--muted-foreground);
     padding: 2px 7px;
+  }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    color: var(--muted-foreground);
+  }
+
+  .empty-icon {
+    color: var(--muted-foreground);
+    opacity: 0.4;
+  }
+
+  .empty-body {
+    margin: 0;
+    font-size: 13px;
+  }
+
+  .cta-link {
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--primary);
+    text-decoration: none;
+  }
+
+  .cta-link:hover {
+    text-decoration: underline;
+  }
+
+  .no-results {
+    font-size: 14px;
+    margin: 0;
+  }
+
+  .query-text {
+    color: var(--foreground);
+    font-weight: 500;
   }
 </style>

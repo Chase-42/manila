@@ -4,4 +4,6 @@ pub mod categories;
 pub mod groups;
 pub mod import;
 pub mod ledger;
+pub mod reports;
+pub mod search;
 pub mod transactions;

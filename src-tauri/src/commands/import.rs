@@ -4,6 +4,7 @@ use std::sync::Mutex;
 use tauri::State;
 use uuid::Uuid;
 
+use crate::commands::search::rebuild_fts;
 use crate::import::csv::{self, ColumnMapping, CsvPreview};
 use crate::import::dedup::{self, Candidate};
 use crate::import::ofx;
@@ -309,7 +310,7 @@ fn import_csv_inner(
     }
 
     let classified = dedup::classify_candidates(conn, account_id, candidates);
-    commit_records(
+    let result = commit_records(
         conn,
         "csv",
         account_id,
@@ -317,7 +318,11 @@ fn import_csv_inner(
         classified,
         decisions,
         parse_errors,
-    )
+    )?;
+    if result.imported_count > 0 {
+        rebuild_fts(conn).map_err(|e| e.to_string())?;
+    }
+    Ok(result)
 }
 
 fn import_ofx_inner(
@@ -356,7 +361,7 @@ fn import_ofx_inner(
     }
 
     let classified = dedup::classify_candidates(conn, account_id, candidates);
-    commit_records(
+    let result = commit_records(
         conn,
         "ofx",
         account_id,
@@ -364,7 +369,11 @@ fn import_ofx_inner(
         classified,
         decisions,
         parse_errors,
-    )
+    )?;
+    if result.imported_count > 0 {
+        rebuild_fts(conn).map_err(|e| e.to_string())?;
+    }
+    Ok(result)
 }
 
 #[tauri::command]

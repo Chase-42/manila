@@ -43,6 +43,9 @@ pub fn run() {
             commands::budget::set_allocation,
             commands::budget::reallocate,
             commands::budget::close_month,
+            commands::search::search_transactions,
+            commands::reports::get_spending_by_category,
+            commands::reports::get_monthly_spend_trend,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

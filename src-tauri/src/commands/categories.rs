@@ -83,6 +83,25 @@ pub fn update_category(
     Ok(())
 }
 
+fn upsert_categorization_rule_inner(
+    conn: &Connection,
+    description: &str,
+    category_id: &str,
+) -> Result<(), String> {
+    let id = Uuid::new_v4().to_string();
+    let now = Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at)
+         VALUES (?1, ?2, ?3, 0, ?4)
+         ON CONFLICT(merchant_pattern) DO UPDATE SET
+             category_id = excluded.category_id,
+             created_at  = excluded.created_at",
+        rusqlite::params![id, description, category_id, now],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 fn upsert_split_inner(
     conn: &Connection,
     transaction_id: &str,
@@ -102,16 +121,16 @@ fn upsert_split_inner(
             ));
         }
 
-        // Look up the current raw amount from the unsuperseded record.
-        let amount_cents: i64 = conn
+        // Fetch amount and description from the unsuperseded record in one query.
+        let (amount_cents, description): (i64, String) = conn
             .query_row(
-                "SELECT amount_cents FROM raw_records
+                "SELECT amount_cents, description FROM raw_records
                  WHERE transaction_id = ?1
                    AND NOT EXISTS (
                        SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = raw_records.id
                    )",
                 rusqlite::params![transaction_id],
-                |row| row.get(0),
+                |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .map_err(|e| e.to_string())?;
 
@@ -122,6 +141,10 @@ fn upsert_split_inner(
             rusqlite::params![id, transaction_id, target_type, target_id, amount_cents],
         )
         .map_err(|e| e.to_string())?;
+
+        if target_type == "envelope" {
+            upsert_categorization_rule_inner(conn, &description, target_id)?;
+        }
     }
 
     Ok(())
@@ -460,6 +483,135 @@ mod tests {
         let tx_id = insert_transaction_with_record(&conn, -500);
         let result = upsert_split_inner(&conn, &tx_id, "bogus", "some-id");
         assert!(result.is_err());
+    }
+
+    fn insert_transaction_with_description(conn: &Connection, description: &str) -> String {
+        let account_id = Uuid::new_v4().to_string();
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES (?1, 'Bank', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id, date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, '2026-01-01', -1000, ?4, '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("src|{}", rr_id), description],
+        )
+        .unwrap();
+        tx_id
+    }
+
+    #[test]
+    fn upsert_split_envelope_creates_rule() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_description(&conn, "Whole Foods Market");
+        let cat_id: String = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        upsert_split_inner(&conn, &tx_id, "envelope", &cat_id).unwrap();
+
+        let rule: Option<(String, String)> = conn
+            .query_row(
+                "SELECT merchant_pattern, category_id FROM categorization_rules LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .ok();
+        assert!(rule.is_some(), "rule row should be created");
+        let (pattern, stored_cat) = rule.unwrap();
+        assert_eq!(pattern, "Whole Foods Market");
+        assert_eq!(stored_cat, cat_id);
+    }
+
+    #[test]
+    fn upsert_split_envelope_updates_existing_rule() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_description(&conn, "Shell Station");
+        let mut cat_iter = conn.prepare("SELECT id FROM categories LIMIT 2").unwrap();
+        let cats: Vec<String> = cat_iter
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+        let (cat_a, cat_b) = (&cats[0], &cats[1]);
+
+        upsert_split_inner(&conn, &tx_id, "envelope", cat_a).unwrap();
+        upsert_split_inner(&conn, &tx_id, "envelope", cat_b).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM categorization_rules WHERE merchant_pattern = 'Shell Station'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            count, 1,
+            "re-assigning should update the rule, not insert a new one"
+        );
+
+        let stored_cat: String = conn
+            .query_row(
+                "SELECT category_id FROM categorization_rules WHERE merchant_pattern = 'Shell Station'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(&stored_cat, cat_b);
+    }
+
+    #[test]
+    fn upsert_split_income_does_not_create_rule() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_description(&conn, "Paycheck");
+        let income_id: String = conn
+            .query_row("SELECT id FROM income_categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        upsert_split_inner(&conn, &tx_id, "income", &income_id).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM categorization_rules", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(
+            count, 0,
+            "income splits must not create categorization rules"
+        );
+    }
+
+    #[test]
+    fn upsert_split_clear_does_not_delete_rule() {
+        let db = test_db();
+        let conn = db.lock().unwrap();
+        let tx_id = insert_transaction_with_description(&conn, "Amazon");
+        let cat_id: String = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+
+        upsert_split_inner(&conn, &tx_id, "envelope", &cat_id).unwrap();
+        upsert_split_inner(&conn, &tx_id, "", "").unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM categorization_rules", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1, "clearing a split must not delete existing rules");
     }
 
     #[test]

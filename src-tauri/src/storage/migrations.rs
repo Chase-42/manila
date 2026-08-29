@@ -12,6 +12,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (7, MIGRATION_007),
     (8, MIGRATION_008),
     (9, MIGRATION_009),
+    (10, MIGRATION_010),
 ];
 
 const MIGRATION_001: &str = "
@@ -175,6 +176,16 @@ const MIGRATION_008: &str = "
     CREATE TABLE month_closes (
         month      TEXT NOT NULL PRIMARY KEY,
         closed_at  TEXT NOT NULL
+    );
+";
+
+const MIGRATION_010: &str = "
+    CREATE TABLE categorization_rules (
+        id               TEXT    NOT NULL PRIMARY KEY,
+        merchant_pattern TEXT    NOT NULL UNIQUE,
+        category_id      TEXT    NOT NULL REFERENCES categories(id),
+        priority         INTEGER NOT NULL DEFAULT 0,
+        created_at       TEXT    NOT NULL
     );
 ";
 
@@ -437,6 +448,66 @@ mod tests {
             exists,
             "transactions_fts virtual table should exist after migration 9"
         );
+    }
+
+    #[test]
+    fn migration_010_creates_categorization_rules() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='categorization_rules'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(
+            exists,
+            "categorization_rules table should exist after migration 10"
+        );
+
+        // UNIQUE constraint: inserting two rows with the same merchant_pattern must fail.
+        conn.execute(
+            "INSERT INTO categories (id, name, kind, created_at) VALUES ('cat-1', 'Test', 'flow', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at) VALUES ('r1', 'Grocery', 'cat-1', 0, datetime('now'))",
+            [],
+        )
+        .unwrap();
+        let dup_result = conn.execute(
+            "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at) VALUES ('r2', 'Grocery', 'cat-1', 0, datetime('now'))",
+            [],
+        );
+        assert!(
+            dup_result.is_err(),
+            "inserting a duplicate merchant_pattern should fail due to UNIQUE constraint"
+        );
+
+        for col in &[
+            "id",
+            "merchant_pattern",
+            "category_id",
+            "priority",
+            "created_at",
+        ] {
+            let col_exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('categorization_rules') WHERE name=?1",
+                    [col],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(
+                col_exists,
+                "categorization_rules.{col} should exist after migration 10"
+            );
+        }
     }
 
     #[test]

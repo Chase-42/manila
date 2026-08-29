@@ -181,6 +181,37 @@ pub fn preview_ofx_import(
     preview_ofx_inner(&conn, &content, &account_id)
 }
 
+fn apply_categorization_rules_inner(
+    tx: &Connection,
+    transaction_id: &str,
+    description: &str,
+    amount_cents: i64,
+) -> Result<(), String> {
+    let rule: Option<String> = tx
+        .query_row(
+            "SELECT category_id
+             FROM categorization_rules
+             WHERE instr(lower(?1), lower(merchant_pattern)) > 0
+             ORDER BY priority DESC, created_at DESC
+             LIMIT 1",
+            rusqlite::params![description],
+            |row| row.get(0),
+        )
+        .ok();
+
+    if let Some(category_id) = rule {
+        let split_id = Uuid::new_v4().to_string();
+        tx.execute(
+            "INSERT INTO splits (id, transaction_id, target_type, target_id, amount_cents)
+             VALUES (?1, ?2, 'envelope', ?3, ?4)",
+            rusqlite::params![split_id, transaction_id, category_id, amount_cents],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 fn commit_records(
     conn: &mut Connection,
     source_type: &str,
@@ -261,6 +292,13 @@ fn commit_records(
             ],
         )
         .map_err(|e| e.to_string())?;
+
+        apply_categorization_rules_inner(
+            &tx,
+            &transaction_id,
+            &candidate.description,
+            candidate.amount_cents,
+        )?;
 
         imported_count += 1;
     }
@@ -424,10 +462,20 @@ mod tests {
     use super::*;
     use crate::storage::db::open_connection;
     use crate::storage::migrations::run_migrations;
+    use crate::storage::seed::{seed_categories, seed_category_groups, seed_income_categories};
 
     fn setup() -> Connection {
         let mut conn = open_connection(":memory:").unwrap();
         run_migrations(&mut conn).unwrap();
+        conn
+    }
+
+    fn setup_with_seeds() -> Connection {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+        seed_categories(&conn).unwrap();
+        seed_category_groups(&conn).unwrap();
+        seed_income_categories(&conn).unwrap();
         conn
     }
 
@@ -723,5 +771,114 @@ mod tests {
         assert_eq!(result.new_count, 0);
         assert_eq!(result.exact_duplicate_count, 2);
         assert!(result.uncertain.is_empty());
+    }
+
+    #[test]
+    fn import_applies_matching_rule() {
+        let mut conn = setup_with_seeds();
+        let account_id = insert_account(&conn);
+
+        // Pre-seed a rule for "Grocery Store" -> first seeded category.
+        let cat_id: String = conn
+            .query_row("SELECT id FROM categories LIMIT 1", [], |r| r.get(0))
+            .unwrap();
+        conn.execute(
+            "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at)
+             VALUES ('rule-1', 'Grocery Store', ?1, 0, datetime('now'))",
+            rusqlite::params![cat_id],
+        )
+        .unwrap();
+
+        let csv = "Date,Description,Amount\n2026-01-15,Grocery Store,-45.67\n";
+        let mapping = ColumnMapping {
+            date_col: "Date".into(),
+            description_col: "Description".into(),
+            amount_col: Some("Amount".into()),
+            flip_sign: false,
+            debit_col: None,
+            credit_col: None,
+        };
+        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+
+        let split_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM splits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(split_count, 1, "a matching rule should auto-create a split");
+
+        let (target_type, target_id): (String, String) = conn
+            .query_row("SELECT target_type, target_id FROM splits", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })
+            .unwrap();
+        assert_eq!(target_type, "envelope");
+        assert_eq!(target_id, cat_id);
+    }
+
+    #[test]
+    fn import_no_match_leaves_uncategorized() {
+        let mut conn = setup_with_seeds();
+        let account_id = insert_account(&conn);
+
+        let csv = "Date,Description,Amount\n2026-01-15,Unknown Merchant,-10.00\n";
+        let mapping = ColumnMapping {
+            date_col: "Date".into(),
+            description_col: "Description".into(),
+            amount_col: Some("Amount".into()),
+            flip_sign: false,
+            debit_col: None,
+            credit_col: None,
+        };
+        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+
+        let split_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM splits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(split_count, 0, "no matching rule means no split");
+    }
+
+    #[test]
+    fn import_picks_highest_priority_rule() {
+        let mut conn = setup_with_seeds();
+        let account_id = insert_account(&conn);
+
+        let cats: Vec<String> = {
+            let mut stmt = conn.prepare("SELECT id FROM categories LIMIT 2").unwrap();
+            stmt.query_map([], |r| r.get(0))
+                .unwrap()
+                .map(|r| r.unwrap())
+                .collect()
+        };
+        let (low_cat, high_cat) = (&cats[0], &cats[1]);
+
+        // Rule with lower priority matches the same description.
+        conn.execute(
+            "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at)
+             VALUES ('rule-low', 'Store', ?1, 0, '2026-01-01T00:00:00Z')",
+            rusqlite::params![low_cat],
+        )
+        .unwrap();
+        // Rule with higher priority, also a substring of the description.
+        conn.execute(
+            "INSERT INTO categorization_rules (id, merchant_pattern, category_id, priority, created_at)
+             VALUES ('rule-high', 'Grocery Store', ?1, 10, '2026-01-02T00:00:00Z')",
+            rusqlite::params![high_cat],
+        )
+        .unwrap();
+
+        let csv = "Date,Description,Amount\n2026-01-15,Grocery Store,-45.67\n";
+        let mapping = ColumnMapping {
+            date_col: "Date".into(),
+            description_col: "Description".into(),
+            amount_col: Some("Amount".into()),
+            flip_sign: false,
+            debit_col: None,
+            credit_col: None,
+        };
+        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+
+        let target_id: String = conn
+            .query_row("SELECT target_id FROM splits", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(&target_id, high_cat, "highest priority rule should win");
     }
 }

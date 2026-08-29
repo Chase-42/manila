@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/stores";
-  import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, BarChart2 } from '@lucide/svelte';
+  import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, Target, BarChart2 } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   let { children } = $props();
@@ -36,6 +36,7 @@
     { href: "/transactions", label: "Transactions", Icon: ArrowLeftRight },
     { href: "/accounts", label: "Accounts", Icon: Wallet },
     { href: "/categories", label: "Categories", Icon: Tag },
+    { href: "/goals", label: "Goals", Icon: Target },
     { href: "/reports", label: "Reports", Icon: BarChart2 },
   ];
 </script>

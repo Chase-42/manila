@@ -13,6 +13,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (8, MIGRATION_008),
     (9, MIGRATION_009),
     (10, MIGRATION_010),
+    (11, MIGRATION_011),
 ];
 
 const MIGRATION_001: &str = "
@@ -186,6 +187,18 @@ const MIGRATION_010: &str = "
         category_id      TEXT    NOT NULL REFERENCES categories(id),
         priority         INTEGER NOT NULL DEFAULT 0,
         created_at       TEXT    NOT NULL
+    );
+";
+
+const MIGRATION_011: &str = "
+    CREATE TABLE goals (
+        id                  TEXT    NOT NULL PRIMARY KEY,
+        name                TEXT    NOT NULL,
+        target_amount_cents INTEGER NOT NULL CHECK(target_amount_cents > 0),
+        category_id         TEXT    REFERENCES categories(id) ON DELETE SET NULL,
+        target_date         TEXT,
+        achieved_at         TEXT,
+        created_at          TEXT    NOT NULL
     );
 ";
 
@@ -507,6 +520,42 @@ mod tests {
                 col_exists,
                 "categorization_rules.{col} should exist after migration 10"
             );
+        }
+    }
+
+    #[test]
+    fn migration_011_creates_goals() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='goals'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(exists, "goals table should exist after migration 11");
+
+        for col in &[
+            "id",
+            "name",
+            "target_amount_cents",
+            "category_id",
+            "target_date",
+            "achieved_at",
+            "created_at",
+        ] {
+            let col_exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('goals') WHERE name=?1",
+                    [col],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(col_exists, "goals.{col} should exist after migration 11");
         }
     }
 

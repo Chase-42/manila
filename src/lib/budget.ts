@@ -1,14 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { BudgetMonthView } from "./generated/BudgetMonthView";
+import type { HomeView } from "./generated/HomeView";
 
 export type { BudgetMonthView };
 export type { BudgetCategoryRow } from "./generated/BudgetCategoryRow";
 export type { BudgetGroupView } from "./generated/BudgetGroupView";
+export type { HomeView } from "./generated/HomeView";
 export type { IncomeCategoryRow } from "./generated/IncomeCategoryRow";
 export type { ReallocationEntry } from "./generated/ReallocationEntry";
 
 export async function getBudgetMonth(month: string): Promise<BudgetMonthView> {
   return invoke("get_budget_month", { month });
+}
+
+export async function getHomeView(today: string): Promise<HomeView> {
+  return invoke("get_home_view", { today });
 }
 
 export async function setAllocation(

@@ -3,7 +3,7 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/stores";
-  import { LayoutDashboard, ArrowLeftRight, Wallet, Tag, BarChart2 } from '@lucide/svelte';
+  import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, BarChart2 } from '@lucide/svelte';
   import type { Component } from 'svelte';
 
   let { children } = $props();
@@ -31,6 +31,7 @@
   }
 
   const navLinks: NavLink[] = [
+    { href: "/", label: "Home", Icon: Home },
     { href: "/budget", label: "Budget", Icon: LayoutDashboard },
     { href: "/transactions", label: "Transactions", Icon: ArrowLeftRight },
     { href: "/accounts", label: "Accounts", Icon: Wallet },
@@ -55,7 +56,7 @@
             <a
               href={href}
               class="nav-item"
-              class:active={$page.url.pathname.startsWith(href)}
+              class:active={href === '/' ? $page.url.pathname === '/' : $page.url.pathname.startsWith(href)}
             >
               <Icon size={16} />
               <span>{label}</span>

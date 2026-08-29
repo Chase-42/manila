@@ -22,6 +22,7 @@
     onsuccess: () => void;
   } = $props();
 
+  // One-shot initializations from props; parent uses {#key} to remount on each open.
   let fromId = $state(initialFrom ?? "");
   let toId = $state(initialTo ?? "");
   let amountStr = $state("");

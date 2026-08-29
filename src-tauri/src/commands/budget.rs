@@ -7,6 +7,120 @@ use ts_rs::TS;
 use uuid::Uuid;
 
 #[derive(Serialize, TS)]
+#[ts(export, export_to = "../../src/lib/generated/HomeView.ts")]
+pub struct HomeView {
+    pub month: String,
+    /// sum of max(0, available) across flow categories; available = allocated + activity + carried_in
+    #[ts(type = "number")]
+    pub flow_remaining_cents: i64,
+    /// calendar days left in month counting today; 0 on the last day after it passes
+    #[ts(type = "number")]
+    pub days_remaining: i64,
+    /// flow_remaining / days_remaining (integer division); 0 when days_remaining is 0
+    #[ts(type = "number")]
+    pub safe_to_spend_daily_cents: i64,
+}
+
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 30,
+    }
+}
+
+fn days_remaining_in_month(today: &str) -> Result<i64, String> {
+    let parts: Vec<&str> = today.split('-').collect();
+    if parts.len() != 3 {
+        return Err(format!("invalid date '{today}'; expected YYYY-MM-DD"));
+    }
+    let year: i32 = parts[0]
+        .parse()
+        .map_err(|_| format!("invalid year in '{today}'"))?;
+    let month: u32 = parts[1]
+        .parse()
+        .map_err(|_| format!("invalid month in '{today}'"))?;
+    let day: u32 = parts[2]
+        .parse()
+        .map_err(|_| format!("invalid day in '{today}'"))?;
+    let last = days_in_month(year, month) as i64;
+    Ok((last - day as i64 + 1).max(0))
+}
+
+#[tauri::command]
+pub fn get_home_view(db: State<'_, Mutex<Connection>>, today: String) -> Result<HomeView, String> {
+    let conn = db.lock().map_err(|e| e.to_string())?;
+    get_home_view_inner(&conn, &today)
+}
+
+fn get_home_view_inner(conn: &Connection, today: &str) -> Result<HomeView, String> {
+    if today.len() < 7 {
+        return Err(format!("invalid date '{today}'"));
+    }
+    let month = &today[..7];
+    let month_prefix = format!("{month}-%");
+
+    let flow_remaining_cents: i64 = conn
+        .query_row(
+            "SELECT COALESCE(SUM(CASE WHEN avail > 0 THEN avail ELSE 0 END), 0)
+             FROM (
+                 SELECT
+                     (
+                         SELECT COALESCE(SUM(ae.amount_cents), 0)
+                         FROM allocation_events ae
+                         WHERE ae.category_id = c.id
+                           AND ae.month = ?1
+                           AND ae.kind != 'carry'
+                     ) +
+                     (
+                         SELECT COALESCE(SUM(s.amount_cents), 0)
+                         FROM splits s
+                         JOIN raw_records rr ON rr.transaction_id = s.transaction_id
+                         WHERE s.target_id = c.id
+                           AND s.target_type = 'envelope'
+                           AND NOT EXISTS (
+                               SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
+                           )
+                           AND rr.date LIKE ?2
+                     ) +
+                     (
+                         SELECT COALESCE(SUM(ae.amount_cents), 0)
+                         FROM allocation_events ae
+                         WHERE ae.category_id = c.id
+                           AND ae.month = ?1
+                           AND ae.kind = 'carry'
+                     ) AS avail
+                 FROM categories c
+                 WHERE c.kind = 'flow'
+             )",
+            rusqlite::params![month, month_prefix],
+            |row| row.get(0),
+        )
+        .map_err(|e| e.to_string())?;
+
+    let days_remaining = days_remaining_in_month(today)?;
+    let safe_to_spend_daily_cents = if days_remaining > 0 {
+        flow_remaining_cents / days_remaining
+    } else {
+        0
+    };
+
+    Ok(HomeView {
+        month: month.to_owned(),
+        flow_remaining_cents,
+        days_remaining,
+        safe_to_spend_daily_cents,
+    })
+}
+
+#[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/IncomeCategoryRow.ts")]
 pub struct IncomeCategoryRow {
     pub income_category_id: String,
@@ -1247,5 +1361,80 @@ mod tests {
             view_after.left_to_allocate_cents, lta_before,
             "left_to_allocate must be unchanged by a reallocation"
         );
+    }
+
+    // --- get_home_view tests ---
+
+    #[test]
+    fn flow_remaining_zero_when_no_allocations() {
+        let conn = test_db();
+        let view = get_home_view_inner(&conn, "2026-08-01").unwrap();
+        assert_eq!(view.flow_remaining_cents, 0);
+        assert_eq!(view.month, "2026-08");
+    }
+
+    #[test]
+    fn flow_remaining_sums_positive_only() {
+        let conn = test_db();
+        let cat1 = first_category_id(&conn, "flow");
+        let cat2 = second_category_id(&conn, "flow");
+        // cat1: allocate 300, spend 100 -> available = 200 (positive, counted)
+        set_allocation_inner(&conn, &cat1, "2026-08", 30_000).unwrap();
+        insert_expense_split(&conn, &cat1, -10_000, "2026-08-10");
+        // cat2: allocate 50, spend 200 -> available = -150 (negative, clamped to 0)
+        set_allocation_inner(&conn, &cat2, "2026-08", 5_000).unwrap();
+        insert_expense_split(&conn, &cat2, -20_000, "2026-08-10");
+
+        let view = get_home_view_inner(&conn, "2026-08-15").unwrap();
+        assert_eq!(view.flow_remaining_cents, 20_000);
+    }
+
+    #[test]
+    fn flow_remaining_clamped_when_all_negative() {
+        let conn = test_db();
+        let cat = first_category_id(&conn, "flow");
+        set_allocation_inner(&conn, &cat, "2026-08", 10_000).unwrap();
+        insert_expense_split(&conn, &cat, -50_000, "2026-08-05");
+
+        let view = get_home_view_inner(&conn, "2026-08-15").unwrap();
+        assert_eq!(
+            view.flow_remaining_cents, 0,
+            "all overspent -> 0, not negative"
+        );
+    }
+
+    #[test]
+    fn days_remaining_counts_today() {
+        // Aug has 31 days; last day = 31 -> remaining = 1
+        assert_eq!(days_remaining_in_month("2026-08-31").unwrap(), 1);
+    }
+
+    #[test]
+    fn days_remaining_full_month() {
+        // Aug 1 -> 31 days remaining
+        assert_eq!(days_remaining_in_month("2026-08-01").unwrap(), 31);
+    }
+
+    #[test]
+    fn safe_to_spend_zero_when_no_days() {
+        let conn = test_db();
+        let cat = first_category_id(&conn, "flow");
+        set_allocation_inner(&conn, &cat, "2026-08", 100_000).unwrap();
+        // Pass a date past the last day to force days_remaining = 0
+        let view = get_home_view_inner(&conn, "2026-08-32").unwrap();
+        assert_eq!(view.days_remaining, 0);
+        assert_eq!(view.safe_to_spend_daily_cents, 0);
+    }
+
+    #[test]
+    fn safe_to_spend_integer_division() {
+        let conn = test_db();
+        let cat = first_category_id(&conn, "flow");
+        // 100 cents over 3 days = 33 (floor)
+        set_allocation_inner(&conn, &cat, "2026-08", 100).unwrap();
+        // "2026-08-29" -> days remaining = 31 - 29 + 1 = 3
+        let view = get_home_view_inner(&conn, "2026-08-29").unwrap();
+        assert_eq!(view.days_remaining, 3);
+        assert_eq!(view.safe_to_spend_daily_cents, 33);
     }
 }

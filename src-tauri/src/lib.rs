@@ -40,6 +40,7 @@ pub fn run() {
             commands::groups::delete_category_group,
             commands::groups::assign_category_to_group,
             commands::budget::get_budget_month,
+            commands::budget::get_home_view,
             commands::budget::set_allocation,
             commands::budget::reallocate,
             commands::budget::close_month,

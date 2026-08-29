@@ -1,5 +1,11 @@
-import { redirect } from '@sveltejs/kit';
+import { getHomeView } from '$lib/budget';
 
-export const load = () => {
-  throw redirect(307, '/budget');
+export const load = async () => {
+  const today = new Date();
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  try {
+    return { home: await getHomeView(todayStr) };
+  } catch {
+    return { home: null };
+  }
 };

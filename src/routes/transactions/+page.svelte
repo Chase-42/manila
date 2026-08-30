@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { listTransactions, searchTransactions } from '$lib/transactions';
+  import { listTransactions, searchTransactions, exportTransactionsCsv } from '$lib/transactions';
+  import { Button } from '$lib/components/ui/button';
   import { formatCents } from '$lib/money';
   import type { TransactionRow } from '$lib/generated/TransactionRow';
   import TransactionDetail from '$lib/components/TransactionDetail.svelte';
@@ -12,6 +13,20 @@
   let selected = $state<TransactionRow | undefined>(undefined);
   let detailOpen = $state(false);
   let query = $state('');
+  let exportStatus = $state<string | null>(null);
+  let exportTimer: ReturnType<typeof setTimeout> | undefined;
+
+  async function handleExport() {
+    try {
+      exportStatus = `Saved: ${await exportTransactionsCsv()}`;
+    } catch (e) {
+      exportStatus = e instanceof Error ? e.message : String(e);
+    }
+    clearTimeout(exportTimer);
+    exportTimer = setTimeout(() => {
+      exportStatus = null;
+    }, 4000);
+  }
 
   async function load() {
     loading = true;
@@ -138,6 +153,12 @@
       <div>
         <h1 class="heading">Transactions</h1>
         {@render subtitle()}
+      </div>
+      <div class="header-actions">
+        <Button variant="outline" size="sm" onclick={handleExport}>Export CSV</Button>
+        {#if exportStatus}
+          <span class="export-status">{exportStatus}</span>
+        {/if}
       </div>
     </div>
     <input
@@ -379,5 +400,18 @@
   .query-text {
     color: var(--foreground);
     font-weight: 500;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+
+  .export-status {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    font-family: var(--font-mono);
   }
 </style>

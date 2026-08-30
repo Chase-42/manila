@@ -27,6 +27,7 @@ pub fn run() {
             commands::import::import_ofx,
             commands::transactions::list_transactions,
             commands::transactions::upsert_transaction_meta,
+            commands::transactions::export_transactions_csv,
             commands::categories::list_categories,
             commands::categories::create_category,
             commands::categories::update_category,

@@ -17,3 +17,7 @@ export async function upsertTransactionMeta(
 ): Promise<void> {
   return invoke('upsert_transaction_meta', { transactionId, notes, tags, reviewed });
 }
+
+export async function exportTransactionsCsv(): Promise<string> {
+  return invoke<string>('export_transactions_csv');
+}

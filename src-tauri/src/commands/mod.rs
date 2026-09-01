@@ -8,3 +8,4 @@ pub mod ledger;
 pub mod reports;
 pub mod search;
 pub mod transactions;
+pub mod vault;

@@ -14,6 +14,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, MIGRATION_009),
     (10, MIGRATION_010),
     (11, MIGRATION_011),
+    (12, MIGRATION_012),
 ];
 
 const MIGRATION_001: &str = "
@@ -199,6 +200,14 @@ const MIGRATION_011: &str = "
         target_date         TEXT,
         achieved_at         TEXT,
         created_at          TEXT    NOT NULL
+    );
+";
+
+const MIGRATION_012: &str = "
+    CREATE TABLE vault_config (
+        salt                     BLOB NOT NULL,
+        encrypted_vault_secret   BLOB NOT NULL,
+        created_at               TEXT NOT NULL
     );
 ";
 
@@ -556,6 +565,40 @@ mod tests {
                 .unwrap()
                 > 0;
             assert!(col_exists, "goals.{col} should exist after migration 11");
+        }
+    }
+
+    #[test]
+    fn migration_012_creates_vault_config() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let table_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vault_config'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(
+            table_exists,
+            "vault_config table should exist after migration 12"
+        );
+
+        for col in &["salt", "encrypted_vault_secret", "created_at"] {
+            let col_exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('vault_config') WHERE name=?1",
+                    [col],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(
+                col_exists,
+                "vault_config.{col} should exist after migration 12"
+            );
         }
     }
 

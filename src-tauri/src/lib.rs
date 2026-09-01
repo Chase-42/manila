@@ -1,7 +1,10 @@
 mod commands;
+mod crypto;
 mod import;
 mod ledger;
 mod storage;
+
+use crypto::VaultState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -14,6 +17,7 @@ pub fn run() {
 
     builder
         .plugin(tauri_plugin_opener::init())
+        .manage(VaultState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,
             commands::ledger::create_transfer,
@@ -52,6 +56,10 @@ pub fn run() {
             commands::goals::create_goal,
             commands::goals::update_goal,
             commands::goals::delete_goal,
+            commands::vault::create_vault,
+            commands::vault::vault_status,
+            commands::vault::unlock_vault,
+            commands::vault::lock_vault,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

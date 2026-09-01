@@ -7,6 +7,8 @@ use rand::RngCore;
 
 use crate::crypto::CryptoError;
 
+// encrypt only fails on wrong key/nonce sizes, both of which are type-guaranteed at [u8; 32]/[u8; 24].
+#[allow(clippy::expect_used)]
 pub fn encrypt_vault_secret(master_key: &[u8; 32], vault_secret: &[u8; 32]) -> Vec<u8> {
     let cipher = XChaCha20Poly1305::new(master_key.into());
     let mut nonce_bytes = [0u8; 24];

@@ -1,3 +1,5 @@
+#![forbid(clippy::float_arithmetic)]
+
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Serialize;

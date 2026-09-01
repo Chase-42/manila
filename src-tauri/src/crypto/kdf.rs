@@ -1,5 +1,7 @@
 use argon2::{Algorithm, Argon2, Params, Version};
 
+// Params::new and hash_password_into only fail on bad sizes; all values here are constants.
+#[allow(clippy::expect_used)]
 pub fn derive_master_key(password: &[u8], salt: &[u8; 32]) -> [u8; 32] {
     let params = Params::new(
         65_536, // 64 MiB

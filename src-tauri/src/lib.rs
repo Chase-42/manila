@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 mod commands;
 mod crypto;
 mod import;
@@ -6,6 +8,8 @@ mod storage;
 
 use crypto::VaultState;
 
+// Tauri's Builder::run() returns Result but the entry point has nowhere to propagate it.
+#[allow(clippy::expect_used)]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();

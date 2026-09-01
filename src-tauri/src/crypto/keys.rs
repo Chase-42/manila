@@ -7,6 +7,8 @@ pub struct DerivedKeys {
     pub sync_signing_seed: [u8; 32],
 }
 
+// expand only fails when output exceeds 255 * hash_len bytes; 32 bytes is always within range.
+#[allow(clippy::expect_used)]
 pub fn derive_keys(vault_secret: &[u8; 32]) -> DerivedKeys {
     let hk = Hkdf::<Sha256>::new(None, vault_secret);
     let mut data_key = [0u8; 32];

@@ -1,3 +1,5 @@
+#![forbid(clippy::float_arithmetic)]
+
 use rusqlite::Connection;
 use thiserror::Error;
 use uuid::Uuid;

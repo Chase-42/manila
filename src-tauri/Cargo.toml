@@ -39,3 +39,10 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 zeroize = { version = "1", features = ["derive"] }
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+

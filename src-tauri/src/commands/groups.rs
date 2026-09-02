@@ -16,8 +16,10 @@ pub struct CategoryGroupRow {
 
 #[tauri::command]
 pub fn list_category_groups(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<CategoryGroupRow>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, name, sort_order FROM category_groups ORDER BY sort_order")
@@ -38,9 +40,11 @@ pub fn list_category_groups(
 
 #[tauri::command]
 pub fn create_category_group(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     name: String,
 ) -> Result<String, String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Group name cannot be blank".into());
@@ -65,10 +69,12 @@ pub fn create_category_group(
 
 #[tauri::command]
 pub fn update_category_group(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Group name cannot be blank".into());
@@ -87,7 +93,12 @@ pub fn update_category_group(
 }
 
 #[tauri::command]
-pub fn delete_category_group(db: State<'_, Mutex<Connection>>, id: String) -> Result<(), String> {
+pub fn delete_category_group(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<'_, Mutex<Connection>>,
+    id: String,
+) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     let assigned: i64 = conn
         .query_row(
@@ -115,10 +126,12 @@ pub fn delete_category_group(db: State<'_, Mutex<Connection>>, id: String) -> Re
 
 #[tauri::command]
 pub fn assign_category_to_group(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     category_id: String,
     group_id: Option<String>,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute(

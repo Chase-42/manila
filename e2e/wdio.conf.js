@@ -1,6 +1,7 @@
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
+import { ensureVaultUnlocked } from './helpers/vault.js';
 
 const __dirname = fileURLToPath(new URL('.', import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -43,6 +44,12 @@ export const config = {
   },
 
   reporters: ['spec'],
+
+  // Unlock the vault once before any spec runs. The app always starts locked;
+  // the helper handles both the uninitialized (create) and locked (unlock) modes.
+  before: async () => {
+    await ensureVaultUnlocked();
+  },
 
   // Build the app before any test session starts.
   // --no-bundle skips installer creation but still produces the debug binary.

@@ -162,21 +162,25 @@ fn preview_ofx_inner(
 
 #[tauri::command]
 pub fn preview_csv_import(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     content: String,
     mapping: ColumnMapping,
     account_id: String,
 ) -> Result<PendingImport, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     preview_csv_inner(&conn, &content, &mapping, &account_id)
 }
 
 #[tauri::command]
 pub fn preview_ofx_import(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     content: String,
     account_id: String,
 ) -> Result<PendingImport, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     preview_ofx_inner(&conn, &content, &account_id)
 }
@@ -416,12 +420,14 @@ fn import_ofx_inner(
 
 #[tauri::command]
 pub fn import_ofx(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     content: String,
     account_id: String,
     filename: String,
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
+    super::require_unlocked(&vault)?;
     let mut conn = db.lock().map_err(|e| e.to_string())?;
     import_ofx_inner(
         &mut conn,
@@ -439,6 +445,7 @@ pub fn parse_csv_preview(content: String) -> Result<CsvPreview, String> {
 
 #[tauri::command]
 pub fn import_csv(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     content: String,
     mapping: ColumnMapping,
@@ -446,6 +453,7 @@ pub fn import_csv(
     filename: String,
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
+    super::require_unlocked(&vault)?;
     let mut conn = db.lock().map_err(|e| e.to_string())?;
     import_csv_inner(
         &mut conn,

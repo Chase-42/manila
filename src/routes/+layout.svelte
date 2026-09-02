@@ -5,6 +5,8 @@
   import { page } from "$app/stores";
   import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, Target, BarChart2 } from '@lucide/svelte';
   import type { Component } from 'svelte';
+  import LockScreen from "$lib/components/LockScreen.svelte";
+  import { lockVault, vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
 
   let { children } = $props();
 
@@ -19,9 +21,35 @@
     try {
       await invoke("init_db");
       dbReady = true;
+      await refreshVaultStatus();
     } catch (e) {
       dbError = e instanceof Error ? e.message : String(e);
     }
+  });
+
+  // Separate synchronous onMount so the cleanup function is wired up correctly.
+  // An async onMount returns a Promise, which Svelte cannot use as a cleanup.
+  onMount(() => {
+    const INACTIVITY_MS = 15 * 60 * 1000;
+    let timerId: ReturnType<typeof setTimeout> | undefined;
+
+    function resetTimer() {
+      clearTimeout(timerId);
+      timerId = setTimeout(lockVault, INACTIVITY_MS);
+    }
+
+    const events = ["mousemove", "keydown", "click", "touchstart"] as const;
+    for (const event of events) {
+      window.addEventListener(event, resetTimer, { passive: true });
+    }
+    resetTimer();
+
+    return () => {
+      clearTimeout(timerId);
+      for (const event of events) {
+        window.removeEventListener(event, resetTimer);
+      }
+    };
   });
 
   interface NavLink {
@@ -47,7 +75,11 @@
     <p>{dbError}</p>
     <p class="hint">Restart the app. If this persists, check that the app data directory is writable.</p>
   </div>
-{:else if dbReady}
+{:else if !dbReady || $vaultStatus === null || !$vaultStatus.unlocked}
+  {#if dbReady}
+    <LockScreen onUnlocked={refreshVaultStatus} />
+  {/if}
+{:else}
   <div class="shell">
     <nav class="sidebar">
       <div class="wordmark">manila</div>

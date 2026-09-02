@@ -33,6 +33,7 @@ pub fn init_db(app: AppHandle) -> Result<(), String> {
 /// outflow from from_account, inflow to to_account.
 #[tauri::command]
 pub fn create_transfer(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     from_account_id: String,
     to_account_id: String,
@@ -40,6 +41,7 @@ pub fn create_transfer(
     amount_cents: i64,
     description: String,
 ) -> Result<String, String> {
+    super::require_unlocked(&vault)?;
     let mut conn = db.lock().map_err(|e| e.to_string())?;
     let postings = [
         PostingInput {

@@ -57,7 +57,12 @@ fn days_remaining_in_month(today: &str) -> Result<i64, String> {
 }
 
 #[tauri::command]
-pub fn get_home_view(db: State<'_, Mutex<Connection>>, today: String) -> Result<HomeView, String> {
+pub fn get_home_view(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<'_, Mutex<Connection>>,
+    today: String,
+) -> Result<HomeView, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     get_home_view_inner(&conn, &today)
 }
@@ -214,9 +219,11 @@ struct RawBudgetRow {
 
 #[tauri::command]
 pub fn get_budget_month(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     month: String,
 ) -> Result<BudgetMonthView, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     get_budget_month_inner(&conn, &month)
 }
@@ -456,11 +463,13 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
 
 #[tauri::command]
 pub fn set_allocation(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     category_id: String,
     month: String,
     new_amount_cents: i64,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     if new_amount_cents < 0 {
         return Err("Allocation amount must be non-negative".into());
     }
@@ -520,7 +529,12 @@ fn next_month(month: &str) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn close_month(db: State<'_, Mutex<Connection>>, month: String) -> Result<(), String> {
+pub fn close_month(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<'_, Mutex<Connection>>,
+    month: String,
+) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     close_month_inner(&conn, &month)
 }
@@ -607,12 +621,14 @@ fn close_month_inner(conn: &Connection, month: &str) -> Result<(), String> {
 
 #[tauri::command]
 pub fn reallocate(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     from_category_id: String,
     to_category_id: String,
     month: String,
     amount_cents: i64,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     reallocate_inner(
         &conn,

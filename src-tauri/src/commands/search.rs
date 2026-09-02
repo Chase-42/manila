@@ -111,9 +111,11 @@ fn search_transactions_inner(
 
 #[tauri::command]
 pub fn search_transactions(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     query: String,
 ) -> Result<Vec<TransactionRow>, String> {
+    super::require_unlocked(&vault)?;
     if query.is_empty() {
         return Ok(vec![]);
     }

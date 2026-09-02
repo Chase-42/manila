@@ -97,13 +97,18 @@ fn update_account_inner(
 }
 
 #[tauri::command]
-pub fn list_accounts(db: State<Mutex<Connection>>) -> Result<Vec<AccountRow>, String> {
+pub fn list_accounts(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<Mutex<Connection>>,
+) -> Result<Vec<AccountRow>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     list_accounts_inner(&conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn create_account(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     name: String,
     account_type: String,
@@ -111,6 +116,7 @@ pub fn create_account(
     institution: String,
     currency: String,
 ) -> Result<String, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     create_account_inner(
         &conn,
@@ -124,6 +130,7 @@ pub fn create_account(
 
 #[tauri::command]
 pub fn update_account(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     id: String,
     name: String,
@@ -131,6 +138,7 @@ pub fn update_account(
     subtype: String,
     institution: String,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     update_account_inner(&conn, &id, &name, &account_type, &subtype, &institution)
 }

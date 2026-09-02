@@ -18,7 +18,11 @@ pub struct CategoryRow {
 }
 
 #[tauri::command]
-pub fn list_categories(db: State<'_, Mutex<Connection>>) -> Result<Vec<CategoryRow>, String> {
+pub fn list_categories(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<'_, Mutex<Connection>>,
+) -> Result<Vec<CategoryRow>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     let mut stmt = conn
         .prepare("SELECT id, name, kind, group_id, created_at FROM categories ORDER BY kind, name")
@@ -41,10 +45,12 @@ pub fn list_categories(db: State<'_, Mutex<Connection>>) -> Result<Vec<CategoryR
 
 #[tauri::command]
 pub fn create_category(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     name: String,
     kind: String,
 ) -> Result<String, String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Category name cannot be blank".into());
@@ -62,10 +68,12 @@ pub fn create_category(
 
 #[tauri::command]
 pub fn update_category(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Category name cannot be blank".into());
@@ -152,11 +160,13 @@ fn upsert_split_inner(
 
 #[tauri::command]
 pub fn upsert_split(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     transaction_id: String,
     target_type: String,
     target_id: String,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     upsert_split_inner(&conn, &transaction_id, &target_type, &target_id)
 }
@@ -221,27 +231,33 @@ fn set_income_category_hidden_inner(
 
 #[tauri::command]
 pub fn list_income_categories(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<IncomeCategoryItem>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     list_income_categories_inner(&conn)
 }
 
 #[tauri::command]
 pub fn create_income_category(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     name: String,
 ) -> Result<String, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     create_income_category_inner(&conn, &name)
 }
 
 #[tauri::command]
 pub fn set_income_category_hidden(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     id: String,
     hidden: bool,
 ) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     set_income_category_hidden_inner(&conn, &id, hidden)
 }

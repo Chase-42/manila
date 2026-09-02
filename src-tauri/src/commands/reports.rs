@@ -136,18 +136,22 @@ fn get_monthly_spend_trend_inner(
 
 #[tauri::command]
 pub fn get_spending_by_category(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     month: String,
 ) -> Result<Vec<CategorySpendReport>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     get_spending_by_category_inner(&conn, &month)
 }
 
 #[tauri::command]
 pub fn get_monthly_spend_trend(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<Mutex<Connection>>,
     months: u32,
 ) -> Result<Vec<MonthlySpendTrend>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     get_monthly_spend_trend_inner(&conn, months)
 }

@@ -104,20 +104,24 @@ fn list_goals_with_progress_inner(conn: &Connection) -> Result<Vec<GoalWithProgr
 
 #[tauri::command]
 pub fn list_goals_with_progress(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<GoalWithProgress>, String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     list_goals_with_progress_inner(&conn)
 }
 
 #[tauri::command]
 pub fn create_goal(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     name: String,
     target_amount_cents: i64,
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
@@ -147,6 +151,7 @@ pub fn create_goal(
 
 #[tauri::command]
 pub fn update_goal(
+    vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
@@ -154,6 +159,7 @@ pub fn update_goal(
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
+    super::require_unlocked(&vault)?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
@@ -198,7 +204,12 @@ pub fn update_goal(
 }
 
 #[tauri::command]
-pub fn delete_goal(db: State<'_, Mutex<Connection>>, id: String) -> Result<(), String> {
+pub fn delete_goal(
+    vault: State<'_, crate::crypto::VaultState>,
+    db: State<'_, Mutex<Connection>>,
+    id: String,
+) -> Result<(), String> {
+    super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
     let rows = conn
         .execute("DELETE FROM goals WHERE id = ?1", rusqlite::params![id])

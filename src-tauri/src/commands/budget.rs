@@ -1455,4 +1455,59 @@ mod tests {
         assert_eq!(view.days_remaining, 3);
         assert_eq!(view.safe_to_spend_daily_cents, 33);
     }
+
+    #[test]
+    fn get_home_view_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn get_budget_month_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn set_allocation_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn reallocate_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn close_month_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

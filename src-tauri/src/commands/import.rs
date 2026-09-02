@@ -845,6 +845,50 @@ mod tests {
     }
 
     #[test]
+    fn preview_csv_import_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn preview_ofx_import_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn import_csv_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn import_ofx_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
     fn import_picks_highest_priority_rule() {
         let mut conn = setup_with_seeds();
         let account_id = insert_account(&conn);

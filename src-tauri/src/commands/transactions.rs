@@ -571,4 +571,37 @@ mod tests {
         assert!(split_amounts.contains("-70.00"));
         assert!(split_amounts.contains("-30.00"));
     }
+
+    #[test]
+    fn list_transactions_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn upsert_transaction_meta_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn export_transactions_csv_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

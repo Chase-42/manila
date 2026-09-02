@@ -329,4 +329,59 @@ mod tests {
             .unwrap();
         assert!(stored.is_none());
     }
+
+    #[test]
+    fn list_category_groups_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn create_category_group_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn update_category_group_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn delete_category_group_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn assign_category_to_group_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

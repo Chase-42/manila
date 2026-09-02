@@ -200,4 +200,37 @@ mod tests {
         let result = update_account_inner(&conn, &id, "", "depository", "checking", "Chase");
         assert!(result.is_err());
     }
+
+    #[test]
+    fn list_accounts_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn create_account_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn update_account_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

@@ -401,4 +401,14 @@ mod tests {
         let result = restore_from_phrase_inner(&conn, &keys, &wrong_phrase, "new-password");
         assert!(result.is_err(), "wrong phrase should be rejected");
     }
+
+    #[test]
+    fn generate_recovery_phrase_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

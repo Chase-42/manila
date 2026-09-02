@@ -217,4 +217,15 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, target_id);
     }
+
+    #[test]
+    fn search_transactions_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        use std::sync::Mutex;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

@@ -687,4 +687,74 @@ mod tests {
         let result = set_income_category_hidden_inner(&conn, "no-such-id", true);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn list_categories_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn create_category_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn update_category_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn upsert_split_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn list_income_categories_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn create_income_category_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
+
+    #[test]
+    fn set_income_category_hidden_gate_rejects_locked() {
+        use crate::crypto::VaultState;
+        let vault = VaultState(Mutex::new(None));
+        assert_eq!(
+            crate::commands::require_unlocked(&vault).unwrap_err(),
+            "locked"
+        );
+    }
 }

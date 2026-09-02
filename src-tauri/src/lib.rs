@@ -6,7 +6,7 @@ mod import;
 mod ledger;
 mod storage;
 
-use crypto::VaultState;
+use crypto::{OnboardingState, VaultState};
 
 // Tauri's Builder::run() returns Result but the entry point has nowhere to propagate it.
 #[allow(clippy::expect_used)]
@@ -22,6 +22,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .manage(VaultState(std::sync::Mutex::new(None)))
+        .manage(OnboardingState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,
             commands::ledger::create_transfer,
@@ -64,6 +65,9 @@ pub fn run() {
             commands::vault::vault_status,
             commands::vault::unlock_vault,
             commands::vault::lock_vault,
+            commands::vault::generate_recovery_phrase,
+            commands::vault::acknowledge_recovery_phrase,
+            commands::vault::restore_from_phrase,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

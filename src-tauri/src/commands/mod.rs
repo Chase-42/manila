@@ -43,6 +43,14 @@ mod security_gate {
             "parse_csv_preview",
             "stateless CSV parser; reads no DB rows, no financial data",
         ),
+        (
+            "acknowledge_recovery_phrase",
+            "clears onboarding state; runs after ceremony, no financial data returned",
+        ),
+        (
+            "restore_from_phrase",
+            "the password-reset path; runs before unlock, derives new vault keys from phrase",
+        ),
     ];
 
     fn locked() -> VaultState {
@@ -132,6 +140,12 @@ mod security_gate {
 
     #[test]
     fn transactions_module_gate_rejects_locked() {
+        assert_eq!(require_unlocked(&locked()).unwrap_err(), "locked");
+    }
+
+    #[test]
+    fn vault_phrase_generate_gate_rejects_locked() {
+        // generate_recovery_phrase calls require_unlocked; verify the gate fires.
         assert_eq!(require_unlocked(&locked()).unwrap_err(), "locked");
     }
 }

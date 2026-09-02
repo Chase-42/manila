@@ -15,6 +15,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, MIGRATION_010),
     (11, MIGRATION_011),
     (12, MIGRATION_012),
+    (13, MIGRATION_013),
 ];
 
 const MIGRATION_001: &str = "
@@ -209,6 +210,10 @@ const MIGRATION_012: &str = "
         encrypted_vault_secret   BLOB NOT NULL,
         created_at               TEXT NOT NULL
     );
+";
+
+const MIGRATION_013: &str = "
+    ALTER TABLE vault_config ADD COLUMN phrase_verifier BLOB;
 ";
 
 const MIGRATION_009: &str = "
@@ -600,6 +605,25 @@ mod tests {
                 "vault_config.{col} should exist after migration 12"
             );
         }
+    }
+
+    #[test]
+    fn migration_013_adds_phrase_verifier_column() {
+        let mut conn = open_connection(":memory:").unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let col_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('vault_config') WHERE name='phrase_verifier'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(
+            col_exists,
+            "vault_config.phrase_verifier should exist after migration 13"
+        );
     }
 
     #[test]

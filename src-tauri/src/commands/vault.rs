@@ -119,14 +119,15 @@ pub(crate) fn restore_from_phrase_inner(
         })
         .map_err(|_| "vault not initialized".to_string())?;
 
-    if let Some(verifier_bytes) = stored_verifier {
-        let stored: [u8; 32] = verifier_bytes
-            .try_into()
-            .map_err(|_| "recovery phrase not recognized".to_string())?;
-        let candidate_verifier = derive_phrase_verifier(&candidate_secret);
-        if candidate_verifier != stored {
-            return Err("recovery phrase not recognized".to_string());
-        }
+    // A NULL verifier means no phrase ceremony was completed; no valid phrase exists.
+    let verifier_bytes =
+        stored_verifier.ok_or_else(|| "recovery phrase not recognized".to_string())?;
+    let stored: [u8; 32] = verifier_bytes
+        .try_into()
+        .map_err(|_| "recovery phrase not recognized".to_string())?;
+    let candidate_verifier = derive_phrase_verifier(&candidate_secret);
+    if candidate_verifier != stored {
+        return Err("recovery phrase not recognized".to_string());
     }
 
     let mut new_salt = [0u8; 32];
@@ -360,6 +361,30 @@ mod tests {
             keys.lock().unwrap().is_some(),
             "unlocked with new password after restore"
         );
+    }
+
+    #[test]
+    fn restore_without_verifier_returns_err() {
+        let conn = setup();
+        let keys = locked_keys();
+        let ob = fresh_onboarding();
+
+        create_vault_inner(&conn, &keys, &ob, "password").unwrap();
+
+        // Simulate a legacy vault created before migration 013.
+        conn.execute("UPDATE vault_config SET phrase_verifier = NULL", [])
+            .unwrap();
+
+        let secret = ob.lock().unwrap();
+        let phrase = encode_phrase(secret.as_ref().unwrap()).join(" ");
+        drop(secret);
+
+        let result = restore_from_phrase_inner(&conn, &keys, &phrase, "new-password");
+        assert!(
+            result.is_err(),
+            "restore must be rejected when no verifier is stored"
+        );
+        assert_eq!(result.unwrap_err(), "recovery phrase not recognized");
     }
 
     #[test]

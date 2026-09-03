@@ -8,6 +8,7 @@ use crate::commands::search::rebuild_fts;
 use crate::import::csv::{self, ColumnMapping, CsvPreview};
 use crate::import::dedup::{self, Candidate};
 use crate::import::ofx;
+use crate::types::Cents;
 
 #[derive(Debug, Serialize)]
 pub struct ImportResult {
@@ -21,7 +22,7 @@ pub struct ImportResult {
 pub struct UncertainMatch {
     pub candidate_source_id: String,
     pub candidate_date: String,
-    pub candidate_amount_cents: i64,
+    pub candidate_amount_cents: Cents,
     pub candidate_description: String,
     pub existing_raw_record_id: String,
     pub existing_source_id: String,
@@ -42,7 +43,7 @@ pub struct ImportDecision {
     pub accept_as_duplicate: bool,
 }
 
-fn csv_source_id(account_id: &str, date: &str, amount_cents: i64, description: &str) -> String {
+fn csv_source_id(account_id: &str, date: &str, amount_cents: Cents, description: &str) -> String {
     format!(
         "csv|{}|{}|{}|{}",
         account_id, date, amount_cents, description
@@ -189,7 +190,7 @@ fn apply_categorization_rules_inner(
     tx: &Connection,
     transaction_id: &str,
     description: &str,
-    amount_cents: i64,
+    amount_cents: Cents,
 ) -> Result<(), String> {
     let rule: Option<String> = tx
         .query_row(

@@ -6,6 +6,8 @@ use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 
+use crate::types::Cents;
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/CategorySpendReport.ts")]
 pub struct CategorySpendReport {
@@ -15,7 +17,7 @@ pub struct CategorySpendReport {
     pub kind: String,
     /// positive cents: abs value of envelope spending splits for the month
     #[ts(type = "number")]
-    pub spent_cents: i64,
+    pub spent_cents: Cents,
 }
 
 #[derive(Serialize, TS)]
@@ -25,7 +27,7 @@ pub struct MonthlySpendTrend {
     pub month: String,
     /// positive cents: total envelope spending for the month
     #[ts(type = "number")]
-    pub total_spent_cents: i64,
+    pub total_spent_cents: Cents,
 }
 
 fn get_spending_by_category_inner(
@@ -112,11 +114,11 @@ fn get_monthly_spend_trend_inner(
 
     let rows = stmt
         .query_map(rusqlite::params![start_month, end_month], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, Cents>(1)?))
         })
         .map_err(|e| e.to_string())?;
 
-    let mut spend_map: HashMap<String, i64> = HashMap::new();
+    let mut spend_map: HashMap<String, Cents> = HashMap::new();
     for row in rows {
         let (m, spent) = row.map_err(|e| e.to_string())?;
         spend_map.insert(m, spent);
@@ -125,7 +127,7 @@ fn get_monthly_spend_trend_inner(
     Ok(all_months
         .into_iter()
         .map(|m| {
-            let total_spent_cents = spend_map.get(&m).copied().unwrap_or(0);
+            let total_spent_cents = spend_map.get(&m).copied().unwrap_or(Cents::zero());
             MonthlySpendTrend {
                 month: m,
                 total_spent_cents,
@@ -234,7 +236,7 @@ mod tests {
         let result = get_spending_by_category_inner(&conn, "2026-01").unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].category_id, cat_id);
-        assert_eq!(result[0].spent_cents, 5000);
+        assert_eq!(result[0].spent_cents, Cents(5000));
         assert_eq!(result[0].kind, "flow");
     }
 
@@ -251,10 +253,10 @@ mod tests {
         insert_split(&conn, &tx_feb, &cat_id, -2000);
 
         let jan = get_spending_by_category_inner(&conn, "2026-01").unwrap();
-        assert_eq!(jan[0].spent_cents, 1000);
+        assert_eq!(jan[0].spent_cents, Cents(1000));
 
         let feb = get_spending_by_category_inner(&conn, "2026-02").unwrap();
-        assert_eq!(feb[0].spent_cents, 2000);
+        assert_eq!(feb[0].spent_cents, Cents(2000));
     }
 
     #[test]
@@ -271,7 +273,7 @@ mod tests {
 
         let result = get_spending_by_category_inner(&conn, "2026-01").unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].spent_cents, 5000); // refund excluded
+        assert_eq!(result[0].spent_cents, Cents(5000)); // refund excluded
     }
 
     #[test]
@@ -293,7 +295,7 @@ mod tests {
         let conn = setup();
         let result = get_monthly_spend_trend_inner(&conn, 6).unwrap();
         assert_eq!(result.len(), 6);
-        assert!(result.iter().all(|r| r.total_spent_cents == 0));
+        assert!(result.iter().all(|r| r.total_spent_cents == Cents(0)));
     }
 
     #[test]
@@ -325,7 +327,7 @@ mod tests {
             current.month,
             format!("{:04}-{:02}", now.year(), now.month())
         );
-        assert_eq!(current.total_spent_cents, 4000);
+        assert_eq!(current.total_spent_cents, Cents(4000));
     }
 
     #[test]

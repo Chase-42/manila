@@ -5,6 +5,7 @@ use tauri::{AppHandle, Manager, State};
 use ts_rs::TS;
 
 use crate::commands::search::rebuild_fts;
+use crate::types::Cents;
 
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/TransactionRow.ts")]
@@ -15,7 +16,7 @@ pub struct TransactionRow {
     pub date: String,
     // Tauri IPC JSON encodes i64 as a JS number; override bigint.
     #[ts(type = "number")]
-    pub amount_cents: i64,
+    pub amount_cents: Cents,
     pub description: String,
     pub notes: String,
     pub tags: Vec<String>,
@@ -59,7 +60,7 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, Cents>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
                 tags_json,
@@ -214,7 +215,7 @@ fn export_transactions_csv_inner(conn: &Connection) -> Result<Vec<u8>, String> {
                 row.get::<_, String>(3)?, // notes
                 row.get::<_, String>(4)?, // tags_json
                 row.get::<_, i64>(5)?,    // reviewed int
-                row.get::<_, i64>(6)?,    // display_amount_cents
+                row.get::<_, Cents>(6)?,  // display_amount_cents
                 row.get::<_, String>(7)?, // category
             ))
         })
@@ -234,7 +235,13 @@ fn export_transactions_csv_inner(conn: &Connection) -> Result<Vec<u8>, String> {
 
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let tags_str = tags.join(";");
-        let amount_str = format!("{:.2}", display_amount_cents as f64 / 100.0);
+        let sign = if display_amount_cents < Cents::zero() {
+            "-"
+        } else {
+            ""
+        };
+        let abs = display_amount_cents.abs();
+        let amount_str = format!("{}{}.{:02}", sign, abs.0 / 100, abs.0 % 100);
         let reviewed_str = if reviewed_int != 0 { "true" } else { "false" };
 
         wtr.write_record([
@@ -407,7 +414,7 @@ mod tests {
 
         let rows = list_transactions_inner(&conn).unwrap();
         assert_eq!(rows[0].date, "2026-03-10");
-        assert_eq!(rows[0].amount_cents, -2000);
+        assert_eq!(rows[0].amount_cents, Cents(-2000));
         assert_eq!(rows[0].description, "Coffee Shop");
         assert_eq!(rows[0].account_name, "Test Bank");
         assert_eq!(rows[0].account_id, account_id);

@@ -62,7 +62,7 @@ fn search_transactions_inner(
                 row.get::<_, String>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
-                row.get::<_, i64>(4)?,
+                row.get::<_, crate::types::Cents>(4)?,
                 row.get::<_, String>(5)?,
                 row.get::<_, String>(6)?,
                 tags_json,

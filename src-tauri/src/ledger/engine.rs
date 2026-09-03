@@ -1,5 +1,6 @@
 #![forbid(clippy::float_arithmetic)]
 
+use crate::types::{AccountId, Cents, TransactionId};
 use rusqlite::Connection;
 use thiserror::Error;
 use uuid::Uuid;
@@ -9,14 +10,14 @@ pub(crate) enum EngineError {
     #[error("postings must not be empty")]
     EmptyPostings,
     #[error("postings do not balance: sum is {0} cents (must be zero)")]
-    UnbalancedPostings(i64),
+    UnbalancedPostings(Cents),
     #[error(transparent)]
     Db(#[from] rusqlite::Error),
 }
 
 pub(crate) struct PostingInput {
-    pub account_id: String,
-    pub amount_cents: i64,
+    pub account_id: AccountId,
+    pub amount_cents: Cents,
 }
 
 /// Create a balanced double-entry transaction.
@@ -31,21 +32,21 @@ pub(crate) fn create_transaction(
     conn: &mut Connection,
     account_id: &str,
     date: &str,
-    amount_cents: i64,
+    amount_cents: Cents,
     description: &str,
     postings: &[PostingInput],
-) -> Result<String, EngineError> {
+) -> Result<TransactionId, EngineError> {
     if postings.is_empty() {
         return Err(EngineError::EmptyPostings);
     }
 
     // Sign convention: negative = outflow, positive = inflow. Sum must be zero.
-    let sum: i64 = postings.iter().map(|p| p.amount_cents).sum();
-    if sum != 0 {
+    let sum: Cents = postings.iter().map(|p| p.amount_cents).sum();
+    if sum != Cents::zero() {
         return Err(EngineError::UnbalancedPostings(sum));
     }
 
-    let transaction_id = Uuid::new_v4().to_string();
+    let transaction_id = TransactionId::from(Uuid::new_v4().to_string());
     let raw_record_id = Uuid::new_v4().to_string();
     let source_id = Uuid::new_v4().to_string();
 
@@ -108,10 +109,10 @@ pub(crate) fn create_transfer(
     conn: &mut Connection,
     account_id: &str,
     date: &str,
-    amount_cents: i64,
+    amount_cents: Cents,
     description: &str,
     postings: &[PostingInput],
-) -> Result<String, TransferError> {
+) -> Result<TransactionId, TransferError> {
     if postings.len() != 2 {
         return Err(TransferError::WrongPostingCount(postings.len()));
     }
@@ -149,15 +150,16 @@ mod tests {
 
     #[test]
     fn balanced_postings_succeed_and_rows_are_written() {
+        use crate::types::Cents;
         let mut conn = setup();
         let postings = vec![
             PostingInput {
                 account_id: "acc-checking".into(),
-                amount_cents: -5000,
+                amount_cents: Cents(-5000),
             },
             PostingInput {
                 account_id: "acc-credit".into(),
-                amount_cents: 5000,
+                amount_cents: Cents(5000),
             },
         ];
 
@@ -165,7 +167,7 @@ mod tests {
             &mut conn,
             "acc-checking",
             "2026-08-22",
-            -5000,
+            Cents(-5000),
             "TRADER JOE'S",
             &postings,
         )
@@ -201,15 +203,16 @@ mod tests {
 
     #[test]
     fn unbalanced_postings_return_err_and_write_nothing() {
+        use crate::types::Cents;
         let mut conn = setup();
         let postings = vec![
             PostingInput {
                 account_id: "acc-checking".into(),
-                amount_cents: -5000,
+                amount_cents: Cents(-5000),
             },
             PostingInput {
                 account_id: "acc-credit".into(),
-                amount_cents: 4999,
+                amount_cents: Cents(4999),
             },
         ];
 
@@ -217,12 +220,15 @@ mod tests {
             &mut conn,
             "acc-checking",
             "2026-08-22",
-            -5000,
+            Cents(-5000),
             "TRADER JOE'S",
             &postings,
         );
 
-        assert!(matches!(result, Err(EngineError::UnbalancedPostings(-1))));
+        assert!(matches!(
+            result,
+            Err(EngineError::UnbalancedPostings(Cents(-1)))
+        ));
 
         let count: i64 = conn
             .query_row("SELECT COUNT(*) FROM transactions", [], |r| r.get(0))
@@ -232,22 +238,31 @@ mod tests {
 
     #[test]
     fn empty_postings_return_err() {
+        use crate::types::Cents;
         let mut conn = setup();
-        let result = create_transaction(&mut conn, "acc-checking", "2026-08-22", 0, "test", &[]);
+        let result = create_transaction(
+            &mut conn,
+            "acc-checking",
+            "2026-08-22",
+            Cents(0),
+            "test",
+            &[],
+        );
         assert!(matches!(result, Err(EngineError::EmptyPostings)));
     }
 
     #[test]
     fn transfer_creates_two_postings_summing_to_zero() {
+        use crate::types::Cents;
         let mut conn = setup();
         let postings = vec![
             PostingInput {
                 account_id: "acc-checking".into(),
-                amount_cents: -45000,
+                amount_cents: Cents(-45000),
             },
             PostingInput {
                 account_id: "acc-credit".into(),
-                amount_cents: 45000,
+                amount_cents: Cents(45000),
             },
         ];
 
@@ -255,7 +270,7 @@ mod tests {
             &mut conn,
             "acc-checking",
             "2026-08-22",
-            -45000,
+            Cents(-45000),
             "AMEX AUTOPAY",
             &postings,
         )

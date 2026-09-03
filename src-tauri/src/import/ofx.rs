@@ -182,13 +182,13 @@ mod tests {
 
         let r0 = rows[0].as_ref().unwrap();
         assert_eq!(r0.date, "2026-01-15");
-        assert_eq!(r0.amount_cents, -4567);
+        assert_eq!(r0.amount_cents, crate::types::Cents(-4567));
         assert_eq!(r0.description, "Grocery Store");
         assert_eq!(r0.source_id.as_deref(), Some("ofx|acct-1|2026011501"));
 
         let r1 = rows[1].as_ref().unwrap();
         assert_eq!(r1.date, "2026-01-20");
-        assert_eq!(r1.amount_cents, 200000);
+        assert_eq!(r1.amount_cents, crate::types::Cents(200000));
         assert_eq!(r1.description, "Paycheck - Direct Deposit");
         assert_eq!(r1.source_id.as_deref(), Some("ofx|acct-1|2026012001"));
     }
@@ -223,13 +223,13 @@ mod tests {
 
         let r0 = rows[0].as_ref().unwrap();
         assert_eq!(r0.date, "2026-01-01");
-        assert_eq!(r0.amount_cents, -3210);
+        assert_eq!(r0.amount_cents, crate::types::Cents(-3210));
         assert_eq!(r0.description, "Gas Station");
         assert_eq!(r0.source_id.as_deref(), Some("ofx|acct-2|2026010101"));
 
         let r1 = rows[1].as_ref().unwrap();
         assert_eq!(r1.date, "2026-01-15");
-        assert_eq!(r1.amount_cents, 150000);
+        assert_eq!(r1.amount_cents, crate::types::Cents(150000));
         assert_eq!(r1.description, "Employer - Salary payment");
         assert_eq!(r1.source_id.as_deref(), Some("ofx|acct-2|2026011501"));
     }

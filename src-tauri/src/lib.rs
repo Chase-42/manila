@@ -5,6 +5,7 @@ mod crypto;
 mod import;
 mod ledger;
 mod storage;
+pub(crate) mod types;
 
 use crypto::{OnboardingState, VaultState};
 

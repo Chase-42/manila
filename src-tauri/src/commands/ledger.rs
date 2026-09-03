@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::ledger::engine::{self, PostingInput};
 use crate::storage::{db::open_connection, migrations::run_migrations};
+use crate::types::Cents;
 
 /// Open the database, run pending migrations, and register the connection in
 /// Tauri state. Must be called once at app startup before any other command
@@ -38,18 +39,18 @@ pub fn create_transfer(
     from_account_id: String,
     to_account_id: String,
     date: String,
-    amount_cents: i64,
+    amount_cents: Cents,
     description: String,
 ) -> Result<String, String> {
     super::require_unlocked(&vault)?;
     let mut conn = db.lock().map_err(|e| e.to_string())?;
     let postings = [
         PostingInput {
-            account_id: from_account_id.clone(),
+            account_id: from_account_id.clone().into(),
             amount_cents: -amount_cents,
         },
         PostingInput {
-            account_id: to_account_id,
+            account_id: to_account_id.into(),
             amount_cents,
         },
     ];
@@ -61,6 +62,7 @@ pub fn create_transfer(
         &description,
         &postings,
     )
+    .map(|id| id.0)
     .map_err(|e| e.to_string())
 }
 

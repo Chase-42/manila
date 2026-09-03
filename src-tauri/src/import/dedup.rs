@@ -1,3 +1,4 @@
+use crate::types::Cents;
 use rusqlite::Connection;
 
 pub enum DedupClass {
@@ -12,7 +13,7 @@ pub enum DedupClass {
 pub struct Candidate {
     pub source_id: String,
     pub date: String,
-    pub amount_cents: i64,
+    pub amount_cents: Cents,
     pub description: String,
     pub raw_json: String,
 }
@@ -127,7 +128,7 @@ mod tests {
         Candidate {
             source_id: source_id.to_string(),
             date: date.to_string(),
-            amount_cents,
+            amount_cents: Cents(amount_cents),
             description: description.to_string(),
             raw_json: "{}".to_string(),
         }

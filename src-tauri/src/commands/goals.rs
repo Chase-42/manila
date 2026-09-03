@@ -6,13 +6,15 @@ use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::types::{Cents, GoalId};
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/Goal.ts")]
 pub struct Goal {
     pub id: String,
     pub name: String,
     #[ts(type = "number")]
-    pub target_amount_cents: i64,
+    pub target_amount_cents: Cents,
     pub category_id: Option<String>,
     pub target_date: Option<String>,
     pub achieved_at: Option<String>,
@@ -25,18 +27,18 @@ pub struct GoalWithProgress {
     pub id: String,
     pub name: String,
     #[ts(type = "number")]
-    pub target_amount_cents: i64,
+    pub target_amount_cents: Cents,
     pub category_id: Option<String>,
     pub target_date: Option<String>,
     pub achieved_at: Option<String>,
     pub created_at: String,
     #[ts(type = "number")]
-    pub current_balance_cents: i64,
+    pub current_balance_cents: Cents,
 }
 
-fn goal_balance(conn: &Connection, category_id: &str) -> Result<i64, String> {
+fn goal_balance(conn: &Connection, category_id: &str) -> Result<Cents, String> {
     // All-time allocations (excluding carry) minus all-time spending for the category.
-    let allocated: i64 = conn
+    let allocated: Cents = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_cents), 0) FROM allocation_events
              WHERE category_id = ?1 AND kind != 'carry'",
@@ -45,7 +47,7 @@ fn goal_balance(conn: &Connection, category_id: &str) -> Result<i64, String> {
         )
         .map_err(|e| e.to_string())?;
 
-    let spent: i64 = conn
+    let spent: Cents = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_cents), 0) FROM splits
              WHERE target_type = 'envelope' AND target_id = ?1",
@@ -70,7 +72,7 @@ fn list_goals_with_progress_inner(conn: &Connection) -> Result<Vec<GoalWithProgr
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
-                row.get::<_, i64>(2)?,
+                row.get::<_, Cents>(2)?,
                 row.get::<_, Option<String>>(3)?,
                 row.get::<_, Option<String>>(4)?,
                 row.get::<_, Option<String>>(5)?,
@@ -86,7 +88,7 @@ fn list_goals_with_progress_inner(conn: &Connection) -> Result<Vec<GoalWithProgr
     {
         let current_balance_cents = match &category_id {
             Some(cat_id) => goal_balance(conn, cat_id)?,
-            None => 0,
+            None => Cents::zero(),
         };
         result.push(GoalWithProgress {
             id,
@@ -117,7 +119,7 @@ pub fn create_goal(
     vault: State<'_, crate::crypto::VaultState>,
     db: State<'_, Mutex<Connection>>,
     name: String,
-    target_amount_cents: i64,
+    target_amount_cents: Cents,
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
@@ -126,7 +128,7 @@ pub fn create_goal(
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
     }
-    if target_amount_cents <= 0 {
+    if target_amount_cents <= Cents::zero() {
         return Err("Target amount must be greater than zero".into());
     }
     let id = Uuid::new_v4().to_string();
@@ -155,7 +157,7 @@ pub fn update_goal(
     db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
-    target_amount_cents: i64,
+    target_amount_cents: Cents,
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
@@ -164,7 +166,7 @@ pub fn update_goal(
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
     }
-    if target_amount_cents <= 0 {
+    if target_amount_cents <= Cents::zero() {
         return Err("Target amount must be greater than zero".into());
     }
     let conn = db.lock().map_err(|e| e.to_string())?;
@@ -203,6 +205,16 @@ pub fn update_goal(
     })
 }
 
+fn delete_goal_inner(conn: &Connection, id: GoalId) -> Result<(), String> {
+    let rows = conn
+        .execute("DELETE FROM goals WHERE id = ?1", rusqlite::params![id])
+        .map_err(|e| e.to_string())?;
+    if rows == 0 {
+        return Err(format!("Goal {id} not found"));
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn delete_goal(
     vault: State<'_, crate::crypto::VaultState>,
@@ -211,13 +223,7 @@ pub fn delete_goal(
 ) -> Result<(), String> {
     super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
-    let rows = conn
-        .execute("DELETE FROM goals WHERE id = ?1", rusqlite::params![id])
-        .map_err(|e| e.to_string())?;
-    if rows == 0 {
-        return Err(format!("Goal {id} not found"));
-    }
-    Ok(())
+    delete_goal_inner(&conn, GoalId(id))
 }
 
 #[cfg(test)]
@@ -268,9 +274,9 @@ mod tests {
         let g = &goals[0];
         assert_eq!(g.id, id);
         assert_eq!(g.name, "Vacation");
-        assert_eq!(g.target_amount_cents, 500_000);
+        assert_eq!(g.target_amount_cents, Cents(500_000));
         assert!(g.category_id.is_none());
-        assert_eq!(g.current_balance_cents, 0);
+        assert_eq!(g.current_balance_cents, Cents(0));
     }
 
     #[test]
@@ -322,7 +328,7 @@ mod tests {
         assert_eq!(goals.len(), 1);
         // balance = 80000 allocated - (-20000 spent) = 80000 - (-20000) = 100000
         // Wait: splits store negative amounts for spending. allocated - spent = 80000 - (-20000) = 100000
-        assert_eq!(goals[0].current_balance_cents, 80000 - (-20000_i64));
+        assert_eq!(goals[0].current_balance_cents, Cents(100_000));
     }
 
     #[test]
@@ -353,7 +359,7 @@ mod tests {
         let goals = list_goals_with_progress_inner(&conn).unwrap();
         assert_eq!(goals.len(), 1);
         assert_eq!(goals[0].name, "New Name");
-        assert_eq!(goals[0].target_amount_cents, 75_000);
+        assert_eq!(goals[0].target_amount_cents, Cents(75_000));
     }
 
     #[test]

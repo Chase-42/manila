@@ -2,6 +2,7 @@ use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use super::ParsedRow;
+use crate::types::Cents;
 
 #[derive(Debug, Serialize)]
 pub struct CsvPreview {
@@ -29,7 +30,7 @@ pub struct ColumnMapping {
 ///
 /// Handles: "$1,234.56", "(50.00)", "-12.50", "12.50", "1234", "0.01".
 /// Sign convention: negative = outflow, positive = inflow.
-pub fn parse_amount(s: &str) -> Result<i64, String> {
+pub fn parse_amount(s: &str) -> Result<Cents, String> {
     let s = s.trim();
     let negative = s.starts_with('(') && s.ends_with(')');
     // Strip parentheses, leading sign, and currency symbols.
@@ -42,9 +43,9 @@ pub fn parse_amount(s: &str) -> Result<i64, String> {
         .map_err(|_| format!("cannot parse amount: {s:?}"))?;
     let cents = (value.abs() * 100.0).round() as i64;
     if negative || value < 0.0 {
-        Ok(-cents)
+        Ok(Cents(-cents))
     } else {
-        Ok(cents)
+        Ok(Cents(cents))
     }
 }
 
@@ -230,7 +231,7 @@ fn parse_row(
                     // Some banks fill both columns; use debit if non-zero else credit.
                     let d = parse_amount(debit_cell)?;
                     let c = parse_amount(credit_cell)?;
-                    if d != 0 {
+                    if d != Cents::zero() {
                         -d
                     } else {
                         c
@@ -259,32 +260,32 @@ mod tests {
 
     #[test]
     fn amount_dollar_with_commas() {
-        assert_eq!(parse_amount("$1,234.56").unwrap(), 123456);
+        assert_eq!(parse_amount("$1,234.56").unwrap(), Cents(123456));
     }
 
     #[test]
     fn amount_parenthetical_negative() {
-        assert_eq!(parse_amount("(50.00)").unwrap(), -5000);
+        assert_eq!(parse_amount("(50.00)").unwrap(), Cents(-5000));
     }
 
     #[test]
     fn amount_explicit_negative() {
-        assert_eq!(parse_amount("-12.50").unwrap(), -1250);
+        assert_eq!(parse_amount("-12.50").unwrap(), Cents(-1250));
     }
 
     #[test]
     fn amount_plain_positive() {
-        assert_eq!(parse_amount("12.50").unwrap(), 1250);
+        assert_eq!(parse_amount("12.50").unwrap(), Cents(1250));
     }
 
     #[test]
     fn amount_integer() {
-        assert_eq!(parse_amount("1234").unwrap(), 123400);
+        assert_eq!(parse_amount("1234").unwrap(), Cents(123400));
     }
 
     #[test]
     fn amount_one_cent() {
-        assert_eq!(parse_amount("0.01").unwrap(), 1);
+        assert_eq!(parse_amount("0.01").unwrap(), Cents(1));
     }
 
     #[test]
@@ -337,6 +338,6 @@ mod tests {
         let rows = parse_rows(csv, &mapping).unwrap();
         assert_eq!(rows.len(), 1);
         // Debit wins: 12.50 debit -> -1250 cents (outflow)
-        assert_eq!(rows[0].as_ref().unwrap().amount_cents, -1250);
+        assert_eq!(rows[0].as_ref().unwrap().amount_cents, Cents(-1250));
     }
 }

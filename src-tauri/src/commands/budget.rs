@@ -8,19 +8,21 @@ use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
 
+use crate::types::{CategoryId, Cents, GroupId};
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/HomeView.ts")]
 pub struct HomeView {
     pub month: String,
     /// sum of max(0, available) across flow categories; available = allocated + activity + carried_in
     #[ts(type = "number")]
-    pub flow_remaining_cents: i64,
+    pub flow_remaining_cents: Cents,
     /// calendar days left in month counting today; 0 on the last day after it passes
     #[ts(type = "number")]
     pub days_remaining: i64,
     /// flow_remaining / days_remaining (integer division); 0 when days_remaining is 0
     #[ts(type = "number")]
-    pub safe_to_spend_daily_cents: i64,
+    pub safe_to_spend_daily_cents: Cents,
 }
 
 fn days_in_month(year: i32, month: u32) -> u32 {
@@ -74,7 +76,7 @@ fn get_home_view_inner(conn: &Connection, today: &str) -> Result<HomeView, Strin
     let month = &today[..7];
     let month_prefix = format!("{month}-%");
 
-    let flow_remaining_cents: i64 = conn
+    let flow_remaining_cents: Cents = conn
         .query_row(
             "SELECT COALESCE(SUM(CASE WHEN avail > 0 THEN avail ELSE 0 END), 0)
              FROM (
@@ -116,7 +118,7 @@ fn get_home_view_inner(conn: &Connection, today: &str) -> Result<HomeView, Strin
     let safe_to_spend_daily_cents = if days_remaining > 0 {
         flow_remaining_cents / days_remaining
     } else {
-        0
+        Cents::zero()
     };
 
     Ok(HomeView {
@@ -130,45 +132,48 @@ fn get_home_view_inner(conn: &Connection, today: &str) -> Result<HomeView, Strin
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/IncomeCategoryRow.ts")]
 pub struct IncomeCategoryRow {
-    pub income_category_id: String,
+    #[ts(type = "string")]
+    pub income_category_id: CategoryId,
     pub name: String,
     /// sum of income splits on transactions dated in the current month
     #[ts(type = "number")]
-    pub actual_cents: i64,
+    pub actual_cents: Cents,
 }
 
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/BudgetCategoryRow.ts")]
 pub struct BudgetCategoryRow {
-    pub category_id: String,
+    #[ts(type = "string")]
+    pub category_id: CategoryId,
     pub category_name: String,
     /// "flow" | "sinking"
     #[ts(type = "'flow' | 'sinking'")]
     pub kind: String,
     /// user-driven allocations this month (excludes carry events); sinking: all-time cumulative
     #[ts(type = "number")]
-    pub allocated_cents: i64,
+    pub allocated_cents: Cents,
     /// flow: current-month spending; sinking: all-time cumulative spending; always >= 0
     #[ts(type = "number")]
-    pub spent_cents: i64,
+    pub spent_cents: Cents,
     /// debt carried in from a prior month close; 0 unless this category had a negative available
     #[ts(type = "number")]
-    pub carried_in_cents: i64,
+    pub carried_in_cents: Cents,
 }
 
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/BudgetGroupView.ts")]
 pub struct BudgetGroupView {
-    pub group_id: String,
+    #[ts(type = "string")]
+    pub group_id: GroupId,
     pub group_name: String,
     #[ts(type = "number")]
     pub sort_order: i64,
     #[ts(type = "number")]
-    pub total_allocated_cents: i64,
+    pub total_allocated_cents: Cents,
     #[ts(type = "number")]
-    pub total_spent_cents: i64,
+    pub total_spent_cents: Cents,
     #[ts(type = "number")]
-    pub remaining_cents: i64,
+    pub remaining_cents: Cents,
     pub categories: Vec<BudgetCategoryRow>,
 }
 
@@ -177,13 +182,15 @@ pub struct BudgetGroupView {
 pub struct ReallocationEntry {
     /// ID of the negative (source) allocation_event row
     pub id: String,
-    pub from_category_id: String,
+    #[ts(type = "string")]
+    pub from_category_id: CategoryId,
     pub from_name: String,
-    pub to_category_id: String,
+    #[ts(type = "string")]
+    pub to_category_id: CategoryId,
     pub to_name: String,
     /// absolute value of the moved amount
     #[ts(type = "number")]
-    pub amount_cents: i64,
+    pub amount_cents: Cents,
     pub created_at: String,
 }
 
@@ -193,7 +200,7 @@ pub struct BudgetMonthView {
     pub month: String,
     /// income splits for month minus user-driven allocations (excludes carry events)
     #[ts(type = "number")]
-    pub left_to_allocate_cents: i64,
+    pub left_to_allocate_cents: Cents,
     pub income_rows: Vec<IncomeCategoryRow>,
     pub flow_groups: Vec<BudgetGroupView>,
     pub flow_ungrouped: Vec<BudgetCategoryRow>,
@@ -206,15 +213,15 @@ pub struct BudgetMonthView {
 }
 
 struct RawBudgetRow {
-    category_id: String,
+    category_id: CategoryId,
     category_name: String,
     kind: String,
-    group_id: Option<String>,
+    group_id: Option<GroupId>,
     group_name: Option<String>,
     group_sort_order: Option<i64>,
-    allocated_cents: i64,
-    spent_cents: i64,
-    carried_in_cents: i64,
+    allocated_cents: Cents,
+    spent_cents: Cents,
+    carried_in_cents: Cents,
 }
 
 #[tauri::command]
@@ -314,9 +321,9 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                             group_id: gid,
                             group_name: row.group_name.unwrap_or_default(),
                             sort_order: row.group_sort_order.unwrap_or(0),
-                            total_allocated_cents: 0,
-                            total_spent_cents: 0,
-                            remaining_cents: 0,
+                            total_allocated_cents: Cents::zero(),
+                            total_spent_cents: Cents::zero(),
+                            remaining_cents: Cents::zero(),
                             categories: vec![cat],
                         });
                     } else if let Some(g) = flow_groups.last_mut() {
@@ -332,9 +339,9 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
                             group_id: gid,
                             group_name: row.group_name.unwrap_or_default(),
                             sort_order: row.group_sort_order.unwrap_or(0),
-                            total_allocated_cents: 0,
-                            total_spent_cents: 0,
-                            remaining_cents: 0,
+                            total_allocated_cents: Cents::zero(),
+                            total_spent_cents: Cents::zero(),
+                            remaining_cents: Cents::zero(),
                             categories: vec![cat],
                         });
                     } else if let Some(g) = sinking_groups.last_mut() {
@@ -349,13 +356,21 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
 
     // Derive rollup totals from nested rows; no re-query.
     for g in &mut flow_groups {
-        g.total_allocated_cents = g.categories.iter().map(|c| c.allocated_cents).sum();
-        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum();
+        g.total_allocated_cents = g
+            .categories
+            .iter()
+            .map(|c| c.allocated_cents)
+            .sum::<Cents>();
+        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum::<Cents>();
         g.remaining_cents = g.total_allocated_cents - g.total_spent_cents;
     }
     for g in &mut sinking_groups {
-        g.total_allocated_cents = g.categories.iter().map(|c| c.allocated_cents).sum();
-        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum();
+        g.total_allocated_cents = g
+            .categories
+            .iter()
+            .map(|c| c.allocated_cents)
+            .sum::<Cents>();
+        g.total_spent_cents = g.categories.iter().map(|c| c.spent_cents).sum::<Cents>();
         g.remaining_cents = g.total_allocated_cents - g.total_spent_cents;
     }
 
@@ -392,11 +407,11 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
-    let total_income_cents: i64 = income_rows.iter().map(|r| r.actual_cents).sum();
+    let total_income_cents: Cents = income_rows.iter().map(|r| r.actual_cents).sum::<Cents>();
 
     // Exclude carry events: they are structural (written by month close), not user-driven.
     // Including them would inflate left_to_allocate when a prior month had flow debt.
-    let total_month_allocated: i64 = conn
+    let total_month_allocated: Cents = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM allocation_events
@@ -467,10 +482,10 @@ pub fn set_allocation(
     db: State<'_, Mutex<Connection>>,
     category_id: String,
     month: String,
-    new_amount_cents: i64,
+    new_amount_cents: Cents,
 ) -> Result<(), String> {
     super::require_unlocked(&vault)?;
-    if new_amount_cents < 0 {
+    if new_amount_cents < Cents::zero() {
         return Err("Allocation amount must be non-negative".into());
     }
     let conn = db.lock().map_err(|e| e.to_string())?;
@@ -481,9 +496,9 @@ fn set_allocation_inner(
     conn: &Connection,
     category_id: &str,
     month: &str,
-    new_amount_cents: i64,
+    new_amount_cents: Cents,
 ) -> Result<(), String> {
-    let current_fold: i64 = conn
+    let current_fold: Cents = conn
         .query_row(
             "SELECT COALESCE(SUM(amount_cents), 0)
              FROM allocation_events
@@ -494,7 +509,7 @@ fn set_allocation_inner(
         .map_err(|e| e.to_string())?;
 
     let delta = new_amount_cents - current_fold;
-    if delta == 0 {
+    if delta == Cents::zero() {
         return Ok(());
     }
 
@@ -588,16 +603,16 @@ fn close_month_inner(conn: &Connection, month: &str) -> Result<(), String> {
         )
         .map_err(|e| e.to_string())?;
 
-    let flow_rows: Vec<(String, i64)> = stmt
+    let flow_rows: Vec<(String, Cents)> = stmt
         .query_map(rusqlite::params![month, month_prefix], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, Cents>(1)?))
         })
         .map_err(|e| e.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| e.to_string())?;
 
     for (category_id, available) in flow_rows {
-        if available < 0 {
+        if available < Cents::zero() {
             let carry_id = Uuid::new_v4().to_string();
             conn.execute(
                 "INSERT INTO allocation_events
@@ -626,7 +641,7 @@ pub fn reallocate(
     from_category_id: String,
     to_category_id: String,
     month: String,
-    amount_cents: i64,
+    amount_cents: Cents,
 ) -> Result<(), String> {
     super::require_unlocked(&vault)?;
     let conn = db.lock().map_err(|e| e.to_string())?;
@@ -644,9 +659,9 @@ fn reallocate_inner(
     from_category_id: &str,
     to_category_id: &str,
     month: &str,
-    amount_cents: i64,
+    amount_cents: Cents,
 ) -> Result<(), String> {
-    if amount_cents <= 0 {
+    if amount_cents <= Cents::zero() {
         return Err("Reallocation amount must be positive".into());
     }
     if from_category_id == to_category_id {
@@ -764,7 +779,7 @@ mod tests {
             .chain(view.flow_ungrouped.iter())
             .chain(view.sinking_groups.iter().flat_map(|g| g.categories.iter()))
             .chain(view.sinking_ungrouped.iter())
-            .find(|r| r.category_id == category_id)
+            .find(|r| r.category_id.as_ref() == category_id)
             .unwrap()
     }
 
@@ -772,7 +787,7 @@ mod tests {
     fn set_allocation_inserts_event_on_first_set() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM allocation_events WHERE category_id = ?1",
@@ -795,8 +810,8 @@ mod tests {
     fn set_allocation_inserts_delta_on_adjustment() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
-        set_allocation_inner(&conn, &cat_id, "2026-08", 15_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(15_000)).unwrap();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM allocation_events WHERE category_id = ?1",
@@ -820,8 +835,8 @@ mod tests {
     fn set_allocation_no_op_when_value_unchanged() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM allocation_events WHERE category_id = ?1",
@@ -840,7 +855,7 @@ mod tests {
         let result: Result<(), String> = if -100_i64 < 0 {
             Err("Allocation amount must be non-negative".into())
         } else {
-            set_allocation_inner(&conn, &cat_id, "2026-08", -100)
+            set_allocation_inner(&conn, &cat_id, "2026-08", Cents(-100))
         };
         assert!(result.is_err());
     }
@@ -850,26 +865,26 @@ mod tests {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
         // Allocate to two months; only current should appear in allocated_cents
-        set_allocation_inner(&conn, &cat_id, "2026-08", 20_000).unwrap();
-        set_allocation_inner(&conn, &cat_id, "2026-07", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(20_000)).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-07", Cents(10_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         let row = find_category(&view, &cat_id);
-        assert_eq!(row.allocated_cents, 20_000);
-        assert_eq!(row.spent_cents, 0);
+        assert_eq!(row.allocated_cents, Cents(20_000));
+        assert_eq!(row.spent_cents, Cents(0));
     }
 
     #[test]
     fn get_budget_month_returns_sinking_cumulative() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "sinking");
-        set_allocation_inner(&conn, &cat_id, "2026-07", 5_000).unwrap();
-        set_allocation_inner(&conn, &cat_id, "2026-08", 5_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-07", Cents(5_000)).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(5_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         let row = find_category(&view, &cat_id);
         // cumulative: both months
-        assert_eq!(row.allocated_cents, 10_000);
+        assert_eq!(row.allocated_cents, Cents(10_000));
     }
 
     #[test]
@@ -907,19 +922,19 @@ mod tests {
         // Allocate to a couple of categories so totals are non-zero.
         let flow_id = first_category_id(&conn, "flow");
         let sinking_id = first_category_id(&conn, "sinking");
-        set_allocation_inner(&conn, &flow_id, "2026-08", 15_000).unwrap();
-        set_allocation_inner(&conn, &sinking_id, "2026-08", 8_000).unwrap();
+        set_allocation_inner(&conn, &flow_id, "2026-08", Cents(15_000)).unwrap();
+        set_allocation_inner(&conn, &sinking_id, "2026-08", Cents(8_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         for g in &view.flow_groups {
-            let expected_alloc: i64 = g.categories.iter().map(|c| c.allocated_cents).sum();
-            let expected_spent: i64 = g.categories.iter().map(|c| c.spent_cents).sum();
+            let expected_alloc: Cents = g.categories.iter().map(|c| c.allocated_cents).sum();
+            let expected_spent: Cents = g.categories.iter().map(|c| c.spent_cents).sum();
             assert_eq!(g.total_allocated_cents, expected_alloc);
             assert_eq!(g.total_spent_cents, expected_spent);
         }
         for g in &view.sinking_groups {
-            let expected_alloc: i64 = g.categories.iter().map(|c| c.allocated_cents).sum();
-            let expected_spent: i64 = g.categories.iter().map(|c| c.spent_cents).sum();
+            let expected_alloc: Cents = g.categories.iter().map(|c| c.allocated_cents).sum();
+            let expected_spent: Cents = g.categories.iter().map(|c| c.spent_cents).sum();
             assert_eq!(g.total_allocated_cents, expected_alloc);
             assert_eq!(g.total_spent_cents, expected_spent);
         }
@@ -952,7 +967,8 @@ mod tests {
         assert_eq!(view.income_rows.len(), 4);
         for row in &view.income_rows {
             assert_eq!(
-                row.actual_cents, 0,
+                row.actual_cents,
+                Cents(0),
                 "no splits yet so actual_cents should be 0"
             );
         }
@@ -970,7 +986,7 @@ mod tests {
             .iter()
             .find(|r| r.income_category_id == income_id)
             .unwrap();
-        assert_eq!(row.actual_cents, 480_000);
+        assert_eq!(row.actual_cents, Cents(480_000));
     }
 
     #[test]
@@ -986,7 +1002,8 @@ mod tests {
             .find(|r| r.income_category_id == income_id)
             .unwrap();
         assert_eq!(
-            row.actual_cents, 0,
+            row.actual_cents,
+            Cents(0),
             "split in prior month must not count toward August"
         );
     }
@@ -997,17 +1014,17 @@ mod tests {
         let income_id = first_income_category_id(&conn);
         insert_income_split(&conn, &income_id, 300_000, "2026-08-01");
         let flow_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &flow_id, "2026-08", 100_000).unwrap();
+        set_allocation_inner(&conn, &flow_id, "2026-08", Cents(100_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
-        assert_eq!(view.left_to_allocate_cents, 200_000);
+        assert_eq!(view.left_to_allocate_cents, Cents(200_000));
     }
 
     #[test]
     fn group_remaining_cents_equals_allocated_minus_spent() {
         let conn = test_db();
         let flow_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &flow_id, "2026-08", 50_000).unwrap();
+        set_allocation_inner(&conn, &flow_id, "2026-08", Cents(50_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         for g in &view.flow_groups {
@@ -1034,7 +1051,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 5_000).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(5_000)).unwrap();
 
         let count: i64 = conn
             .query_row(
@@ -1069,7 +1086,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 3_000).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(3_000)).unwrap();
 
         let counterpart_on_from: String = conn
             .query_row(
@@ -1094,7 +1111,7 @@ mod tests {
     fn reallocate_rejects_same_category() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
-        let result = reallocate_inner(&conn, &cat_id, &cat_id, "2026-08", 1_000);
+        let result = reallocate_inner(&conn, &cat_id, &cat_id, "2026-08", Cents(1_000));
         assert!(result.is_err());
     }
 
@@ -1103,7 +1120,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", 0);
+        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(0));
         assert!(result.is_err());
     }
 
@@ -1112,7 +1129,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", -500);
+        let result = reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(-500));
         assert!(result.is_err());
     }
 
@@ -1128,14 +1145,14 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 7_500).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(7_500)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         assert_eq!(view.reallocation_log.len(), 1);
         let entry = &view.reallocation_log[0];
         assert_eq!(entry.from_category_id, from_id);
         assert_eq!(entry.to_category_id, to_id);
-        assert_eq!(entry.amount_cents, 7_500);
+        assert_eq!(entry.amount_cents, Cents(7_500));
     }
 
     #[test]
@@ -1143,7 +1160,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 1_000).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(1_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         let entry = &view.reallocation_log[0];
@@ -1156,7 +1173,7 @@ mod tests {
         let conn = test_db();
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
-        reallocate_inner(&conn, &from_id, &to_id, "2026-07", 1_000).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-07", Cents(1_000)).unwrap();
 
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         assert!(
@@ -1200,10 +1217,14 @@ mod tests {
     fn get_budget_month_carried_in_zero_before_close() {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat_id, "2026-08", 20_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(20_000)).unwrap();
         let view = get_budget_month_inner(&conn, "2026-08").unwrap();
         let row = find_category(&view, &cat_id);
-        assert_eq!(row.carried_in_cents, 0, "no carry before any month close");
+        assert_eq!(
+            row.carried_in_cents,
+            Cents(0),
+            "no carry before any month close"
+        );
     }
 
     #[test]
@@ -1211,16 +1232,17 @@ mod tests {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
         // Overspend: allocate 100, spend 200 => available = -100
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
         insert_expense_split(&conn, &cat_id, -20_000, "2026-08-15");
         close_month_inner(&conn, "2026-08").unwrap();
 
         // September view should show carry debt, but allocated = 0 (user hasn't set anything yet)
         let view = get_budget_month_inner(&conn, "2026-09").unwrap();
         let row = find_category(&view, &cat_id);
-        assert_eq!(row.carried_in_cents, -10_000);
+        assert_eq!(row.carried_in_cents, Cents(-10_000));
         assert_eq!(
-            row.allocated_cents, 0,
+            row.allocated_cents,
+            Cents(0),
             "carry must not inflate allocated_cents"
         );
     }
@@ -1232,7 +1254,7 @@ mod tests {
         let cat_id = first_category_id(&conn, "flow");
         // Record $100 income in August, overspend by $50, close month
         insert_income_split(&conn, &income_id, 10_000, "2026-08-01");
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
         insert_expense_split(&conn, &cat_id, -15_000, "2026-08-10");
         close_month_inner(&conn, "2026-08").unwrap();
 
@@ -1242,7 +1264,8 @@ mod tests {
         // LTA should be $200 (income) - $0 (no user allocations yet) = $200
         // The -$50 carry event must NOT reduce LTA
         assert_eq!(
-            view.left_to_allocate_cents, 20_000,
+            view.left_to_allocate_cents,
+            Cents(20_000),
             "carry events must not reduce left_to_allocate"
         );
     }
@@ -1267,7 +1290,7 @@ mod tests {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
         // Allocate 300 but spend 400 (overspend by 100)
-        set_allocation_inner(&conn, &cat_id, "2026-08", 30_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(30_000)).unwrap();
         insert_expense_split(&conn, &cat_id, -40_000, "2026-08-15");
 
         close_month_inner(&conn, "2026-08").unwrap();
@@ -1291,7 +1314,7 @@ mod tests {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
         // Allocate 500, spend 300 (surplus of 200 - no carry event)
-        set_allocation_inner(&conn, &cat_id, "2026-08", 50_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(50_000)).unwrap();
         insert_expense_split(&conn, &cat_id, -30_000, "2026-08-10");
 
         close_month_inner(&conn, "2026-08").unwrap();
@@ -1345,7 +1368,7 @@ mod tests {
         let conn = test_db();
         let cat_id = first_category_id(&conn, "flow");
         // Allocate 100, spend 250 => available = -150
-        set_allocation_inner(&conn, &cat_id, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat_id, "2026-08", Cents(10_000)).unwrap();
         insert_expense_split(&conn, &cat_id, -25_000, "2026-08-20");
 
         close_month_inner(&conn, "2026-08").unwrap();
@@ -1369,11 +1392,11 @@ mod tests {
         let from_id = first_category_id(&conn, "flow");
         let to_id = second_category_id(&conn, "flow");
 
-        set_allocation_inner(&conn, &from_id, "2026-08", 200_000).unwrap();
+        set_allocation_inner(&conn, &from_id, "2026-08", Cents(200_000)).unwrap();
         let view_before = get_budget_month_inner(&conn, "2026-08").unwrap();
         let lta_before = view_before.left_to_allocate_cents;
 
-        reallocate_inner(&conn, &from_id, &to_id, "2026-08", 50_000).unwrap();
+        reallocate_inner(&conn, &from_id, &to_id, "2026-08", Cents(50_000)).unwrap();
         let view_after = get_budget_month_inner(&conn, "2026-08").unwrap();
         assert_eq!(
             view_after.left_to_allocate_cents, lta_before,
@@ -1387,7 +1410,7 @@ mod tests {
     fn flow_remaining_zero_when_no_allocations() {
         let conn = test_db();
         let view = get_home_view_inner(&conn, "2026-08-01").unwrap();
-        assert_eq!(view.flow_remaining_cents, 0);
+        assert_eq!(view.flow_remaining_cents, Cents(0));
         assert_eq!(view.month, "2026-08");
     }
 
@@ -1397,26 +1420,27 @@ mod tests {
         let cat1 = first_category_id(&conn, "flow");
         let cat2 = second_category_id(&conn, "flow");
         // cat1: allocate 300, spend 100 -> available = 200 (positive, counted)
-        set_allocation_inner(&conn, &cat1, "2026-08", 30_000).unwrap();
+        set_allocation_inner(&conn, &cat1, "2026-08", Cents(30_000)).unwrap();
         insert_expense_split(&conn, &cat1, -10_000, "2026-08-10");
         // cat2: allocate 50, spend 200 -> available = -150 (negative, clamped to 0)
-        set_allocation_inner(&conn, &cat2, "2026-08", 5_000).unwrap();
+        set_allocation_inner(&conn, &cat2, "2026-08", Cents(5_000)).unwrap();
         insert_expense_split(&conn, &cat2, -20_000, "2026-08-10");
 
         let view = get_home_view_inner(&conn, "2026-08-15").unwrap();
-        assert_eq!(view.flow_remaining_cents, 20_000);
+        assert_eq!(view.flow_remaining_cents, Cents(20_000));
     }
 
     #[test]
     fn flow_remaining_clamped_when_all_negative() {
         let conn = test_db();
         let cat = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat, "2026-08", 10_000).unwrap();
+        set_allocation_inner(&conn, &cat, "2026-08", Cents(10_000)).unwrap();
         insert_expense_split(&conn, &cat, -50_000, "2026-08-05");
 
         let view = get_home_view_inner(&conn, "2026-08-15").unwrap();
         assert_eq!(
-            view.flow_remaining_cents, 0,
+            view.flow_remaining_cents,
+            Cents(0),
             "all overspent -> 0, not negative"
         );
     }
@@ -1437,11 +1461,11 @@ mod tests {
     fn safe_to_spend_zero_when_no_days() {
         let conn = test_db();
         let cat = first_category_id(&conn, "flow");
-        set_allocation_inner(&conn, &cat, "2026-08", 100_000).unwrap();
+        set_allocation_inner(&conn, &cat, "2026-08", Cents(100_000)).unwrap();
         // Pass a date past the last day to force days_remaining = 0
         let view = get_home_view_inner(&conn, "2026-08-32").unwrap();
         assert_eq!(view.days_remaining, 0);
-        assert_eq!(view.safe_to_spend_daily_cents, 0);
+        assert_eq!(view.safe_to_spend_daily_cents, Cents(0));
     }
 
     #[test]
@@ -1449,11 +1473,11 @@ mod tests {
         let conn = test_db();
         let cat = first_category_id(&conn, "flow");
         // 100 cents over 3 days = 33 (floor)
-        set_allocation_inner(&conn, &cat, "2026-08", 100).unwrap();
+        set_allocation_inner(&conn, &cat, "2026-08", Cents(100)).unwrap();
         // "2026-08-29" -> days remaining = 31 - 29 + 1 = 3
         let view = get_home_view_inner(&conn, "2026-08-29").unwrap();
         assert_eq!(view.days_remaining, 3);
-        assert_eq!(view.safe_to_spend_daily_cents, 33);
+        assert_eq!(view.safe_to_spend_daily_cents, Cents(33));
     }
 
     #[test]

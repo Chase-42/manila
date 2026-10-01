@@ -93,7 +93,7 @@ mod tests {
     use uuid::Uuid;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }

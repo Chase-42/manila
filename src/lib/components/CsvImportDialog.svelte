@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
+  import { pickTextFile } from "$lib/fileDialog";
   import { parseCsvPreview, previewCsvImport, importCsv, autoDetect } from "$lib/import";
   import type { ColRole, Mode } from "$lib/import";
   import type { CsvPreview, ColumnMapping, ImportResult, PendingImport, ImportDecision } from "$lib/types/import";
@@ -21,8 +22,6 @@
   let fileContent = $state("");
   let preview = $state<CsvPreview | null>(null);
   let previewError = $state<string | null>(null);
-  let fileInputEl = $state<HTMLInputElement | null>(null);
-
   let colAssignments = $state<Record<string, ColRole>>({});
   let mode = $state<Mode>("single");
   let flipSign = $state(false);
@@ -53,6 +52,7 @@
       importError = null;
     }
   });
+
 
   // --- Derived column lookups ---
 
@@ -206,24 +206,21 @@
     mode = next;
   }
 
-  function handleFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    fileName = file.name;
+  async function handlePickFile() {
     previewError = null;
-    if (file.size > 5 * 1024 * 1024) {
-      previewError = "File is too large (max 5 MB). Export a smaller date range.";
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      fileContent = (ev.target?.result as string) ?? "";
-      loadPreview();
-    };
-    reader.onerror = () => {
+    try {
+      const picked = await pickTextFile([{ name: "CSV", extensions: ["csv"] }]);
+      if (!picked) return;
+      if (picked.content.length > 5 * 1024 * 1024) {
+        previewError = "File is too large (max 5 MB). Export a smaller date range.";
+        return;
+      }
+      fileName = picked.name;
+      fileContent = picked.content;
+      await loadPreview();
+    } catch {
       previewError = "Could not read the selected file.";
-    };
-    reader.readAsText(file);
+    }
   }
 
   async function loadPreview() {
@@ -305,14 +302,7 @@
     {#if previewError}
       <p class="error">{previewError}</p>
     {/if}
-    <input
-      bind:this={fileInputEl}
-      type="file"
-      accept=".csv"
-      style="display:none"
-      onchange={handleFileChange}
-    />
-    <Button onclick={() => fileInputEl?.click()}>Choose CSV file</Button>
+    <Button onclick={handlePickFile}>Choose CSV file</Button>
   </div>
 {/snippet}
 

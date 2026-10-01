@@ -1,7 +1,6 @@
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -107,23 +106,28 @@ fn list_goals_with_progress_inner(conn: &Connection) -> Result<Vec<GoalWithProgr
 #[tauri::command]
 pub fn list_goals_with_progress(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<GoalWithProgress>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    list_goals_with_progress_inner(&conn)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    list_goals_with_progress_inner(&unlocked.conn)
 }
 
 #[tauri::command]
 pub fn create_goal(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     name: String,
     target_amount_cents: Cents,
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
@@ -133,8 +137,7 @@ pub fn create_goal(
     }
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    conn.execute(
+    unlocked.conn.execute(
         "INSERT INTO goals (id, name, target_amount_cents, category_id, target_date, achieved_at, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6)",
         rusqlite::params![id, trimmed, target_amount_cents, category_id, target_date, now],
@@ -154,14 +157,17 @@ pub fn create_goal(
 #[tauri::command]
 pub fn update_goal(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
     target_amount_cents: Cents,
     category_id: Option<String>,
     target_date: Option<String>,
 ) -> Result<Goal, String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Goal name cannot be blank".into());
@@ -169,8 +175,8 @@ pub fn update_goal(
     if target_amount_cents <= Cents::zero() {
         return Err("Target amount must be greater than zero".into());
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let rows = conn
+    let rows = unlocked
+        .conn
         .execute(
             "UPDATE goals SET name = ?1, target_amount_cents = ?2, category_id = ?3, target_date = ?4
              WHERE id = ?5",
@@ -180,14 +186,16 @@ pub fn update_goal(
     if rows == 0 {
         return Err(format!("Goal {id} not found"));
     }
-    let achieved_at: Option<String> = conn
+    let achieved_at: Option<String> = unlocked
+        .conn
         .query_row(
             "SELECT achieved_at FROM goals WHERE id = ?1",
             rusqlite::params![id],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let created_at: String = conn
+    let created_at: String = unlocked
+        .conn
         .query_row(
             "SELECT created_at FROM goals WHERE id = ?1",
             rusqlite::params![id],
@@ -216,14 +224,13 @@ fn delete_goal_inner(conn: &Connection, id: GoalId) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub fn delete_goal(
-    vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
-    id: String,
-) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    delete_goal_inner(&conn, GoalId(id))
+pub fn delete_goal(vault: State<'_, crate::crypto::VaultState>, id: String) -> Result<(), String> {
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    delete_goal_inner(&unlocked.conn, GoalId(id))
 }
 
 #[cfg(test)]
@@ -236,7 +243,7 @@ mod tests {
     };
 
     fn test_db() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

@@ -2,7 +2,6 @@ use chrono::{Datelike, Utc};
 use rusqlite::Connection;
 use serde::Serialize;
 use std::collections::HashMap;
-use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 
@@ -139,23 +138,27 @@ fn get_monthly_spend_trend_inner(
 #[tauri::command]
 pub fn get_spending_by_category(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     month: String,
 ) -> Result<Vec<CategorySpendReport>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    get_spending_by_category_inner(&conn, &month)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    get_spending_by_category_inner(&unlocked.conn, &month)
 }
 
 #[tauri::command]
 pub fn get_monthly_spend_trend(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     months: u32,
 ) -> Result<Vec<MonthlySpendTrend>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    get_monthly_spend_trend_inner(&conn, months)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    get_monthly_spend_trend_inner(&unlocked.conn, months)
 }
 
 #[cfg(test)]
@@ -166,7 +169,7 @@ mod tests {
     use uuid::Uuid;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }

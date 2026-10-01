@@ -14,8 +14,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (9, MIGRATION_009),
     (10, MIGRATION_010),
     (11, MIGRATION_011),
-    (12, MIGRATION_012),
-    (13, MIGRATION_013),
+    // 12 and 13 created vault_config; that table is now vault.json on disk
 ];
 
 const MIGRATION_001: &str = "
@@ -204,18 +203,6 @@ const MIGRATION_011: &str = "
     );
 ";
 
-const MIGRATION_012: &str = "
-    CREATE TABLE vault_config (
-        salt                     BLOB NOT NULL,
-        encrypted_vault_secret   BLOB NOT NULL,
-        created_at               TEXT NOT NULL
-    );
-";
-
-const MIGRATION_013: &str = "
-    ALTER TABLE vault_config ADD COLUMN phrase_verifier BLOB;
-";
-
 const MIGRATION_009: &str = "
     CREATE VIRTUAL TABLE transactions_fts USING fts5(
         description,
@@ -260,7 +247,7 @@ mod tests {
 
     #[test]
     fn migration_001_creates_all_tables() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let tables: Vec<String> = {
@@ -282,7 +269,7 @@ mod tests {
 
     #[test]
     fn migration_002_creates_valuation_snapshots() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -299,7 +286,7 @@ mod tests {
 
     #[test]
     fn migration_003_creates_overlay_tables() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         for table in &["transaction_meta", "categories"] {
@@ -317,7 +304,7 @@ mod tests {
 
     #[test]
     fn migration_004_creates_allocation_events() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -336,7 +323,7 @@ mod tests {
 
     #[test]
     fn migration_005_creates_category_groups_and_group_id_column() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let table_exists: bool = conn
@@ -368,7 +355,7 @@ mod tests {
 
     #[test]
     fn migration_006_creates_income_categories_and_splits() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         for table in &["income_categories", "splits"] {
@@ -401,7 +388,7 @@ mod tests {
 
     #[test]
     fn migration_007_drops_group_id_from_allocation_events() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let has_group_id: bool = conn
@@ -444,7 +431,7 @@ mod tests {
 
     #[test]
     fn migration_008_creates_month_closes() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -460,7 +447,7 @@ mod tests {
 
     #[test]
     fn migration_009_creates_transactions_fts() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -479,7 +466,7 @@ mod tests {
 
     #[test]
     fn migration_010_creates_categorization_rules() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -539,7 +526,7 @@ mod tests {
 
     #[test]
     fn migration_011_creates_goals() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
 
         let exists: bool = conn
@@ -574,61 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn migration_012_creates_vault_config() {
-        let mut conn = open_connection(":memory:").unwrap();
-        run_migrations(&mut conn).unwrap();
-
-        let table_exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vault_config'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
-            > 0;
-        assert!(
-            table_exists,
-            "vault_config table should exist after migration 12"
-        );
-
-        for col in &["salt", "encrypted_vault_secret", "created_at"] {
-            let col_exists: bool = conn
-                .query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('vault_config') WHERE name=?1",
-                    [col],
-                    |row| row.get::<_, i64>(0),
-                )
-                .unwrap()
-                > 0;
-            assert!(
-                col_exists,
-                "vault_config.{col} should exist after migration 12"
-            );
-        }
-    }
-
-    #[test]
-    fn migration_013_adds_phrase_verifier_column() {
-        let mut conn = open_connection(":memory:").unwrap();
-        run_migrations(&mut conn).unwrap();
-
-        let col_exists: bool = conn
-            .query_row(
-                "SELECT COUNT(*) FROM pragma_table_info('vault_config') WHERE name='phrase_verifier'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
-            > 0;
-        assert!(
-            col_exists,
-            "vault_config.phrase_verifier should exist after migration 13"
-        );
-    }
-
-    #[test]
     fn migrations_are_idempotent() {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         // second run must not error and must not insert a duplicate row
         run_migrations(&mut conn).unwrap();

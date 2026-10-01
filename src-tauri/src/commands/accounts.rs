@@ -1,6 +1,5 @@
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
 use tauri::State;
 use uuid::Uuid;
 
@@ -99,27 +98,31 @@ fn update_account_inner(
 #[tauri::command]
 pub fn list_accounts(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
 ) -> Result<Vec<AccountRow>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    list_accounts_inner(&conn).map_err(|e| e.to_string())
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    list_accounts_inner(&unlocked.conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn create_account(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     name: String,
     account_type: String,
     subtype: String,
     institution: String,
     currency: String,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     create_account_inner(
-        &conn,
+        &unlocked.conn,
         &name,
         &account_type,
         &subtype,
@@ -131,16 +134,25 @@ pub fn create_account(
 #[tauri::command]
 pub fn update_account(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     id: String,
     name: String,
     account_type: String,
     subtype: String,
     institution: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    update_account_inner(&conn, &id, &name, &account_type, &subtype, &institution)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    update_account_inner(
+        &unlocked.conn,
+        &id,
+        &name,
+        &account_type,
+        &subtype,
+        &institution,
+    )
 }
 
 #[cfg(test)]
@@ -150,7 +162,7 @@ mod tests {
     use crate::storage::migrations::run_migrations;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import * as Dialog from "$lib/components/ui/dialog";
   import { Button } from "$lib/components/ui/button";
+  import { pickTextFile } from "$lib/fileDialog";
   import { previewOfxImport, importOfx } from "$lib/import";
   import type { ImportResult, PendingImport, ImportDecision } from "$lib/types/import";
   import type { Account } from "$lib/types/account";
@@ -19,8 +20,6 @@
   let fileName = $state("");
   let fileContent = $state("");
   let fileError = $state<string | null>(null);
-  let fileInputEl = $state<HTMLInputElement | null>(null);
-
   let previewing = $state(false);
   let pendingImport = $state<PendingImport | null>(null);
   let decisions = $state(new Map<string, boolean>());
@@ -44,24 +43,21 @@
     }
   });
 
-  function handleFileChange(e: Event) {
-    const file = (e.target as HTMLInputElement).files?.[0];
-    if (!file) return;
-    fileName = file.name;
+  async function handlePickFile() {
     fileError = null;
-    if (file.size > 5 * 1024 * 1024) {
-      fileError = "File is too large (max 5 MB). Export a smaller date range.";
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      fileContent = (ev.target?.result as string) ?? "";
+    try {
+      const picked = await pickTextFile([{ name: "OFX / QFX", extensions: ["ofx", "qfx"] }]);
+      if (!picked) return;
+      if (picked.content.length > 5 * 1024 * 1024) {
+        fileError = "File is too large (max 5 MB). Export a smaller date range.";
+        return;
+      }
+      fileName = picked.name;
+      fileContent = picked.content;
       step = 2;
-    };
-    reader.onerror = () => {
+    } catch {
       fileError = "Could not read the selected file.";
-    };
-    reader.readAsText(file);
+    }
   }
 
   function errorMessage(e: unknown): string {
@@ -144,14 +140,7 @@
     {#if fileError}
       <p class="error">{fileError}</p>
     {/if}
-    <input
-      bind:this={fileInputEl}
-      type="file"
-      accept=".ofx,.qfx"
-      style="display:none"
-      onchange={handleFileChange}
-    />
-    <Button onclick={() => fileInputEl?.click()}>Choose OFX / QFX file</Button>
+    <Button onclick={handlePickFile}>Choose OFX / QFX file</Button>
   </div>
 {/snippet}
 

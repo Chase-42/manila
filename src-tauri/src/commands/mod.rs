@@ -25,13 +25,14 @@ pub(crate) fn require_unlocked(vault: &crate::crypto::VaultState) -> Result<(), 
 #[cfg(test)]
 mod security_gate {
     use super::require_unlocked;
-    use crate::crypto::{VaultKeys, VaultState};
+    use crate::crypto::{UnlockedVault, VaultKeys, VaultState};
+    use crate::storage::db::open_connection;
     use std::sync::Mutex;
 
     // Every command on this list deliberately runs before vault unlock or accesses no financial data.
     // Changing this list requires human review.
     const UNGATED_COMMANDS: &[(&str, &str)] = &[
-        ("init_db", "opens the database before the vault exists"),
+        ("init_db", "sets up app data directory before vault exists"),
         ("create_vault", "initializes the vault; nothing to gate on"),
         ("unlock_vault", "the unlock command itself"),
         ("lock_vault", "clearing keys requires no unlocked state"),
@@ -58,10 +59,14 @@ mod security_gate {
     }
 
     fn unlocked() -> VaultState {
-        VaultState(Mutex::new(Some(VaultKeys {
-            data_key: [0u8; 32],
-            ingest_secret: [0u8; 32],
-            sync_signing_seed: [0u8; 32],
+        let conn = open_connection(":memory:", None).expect("in-memory db for test");
+        VaultState(Mutex::new(Some(UnlockedVault {
+            keys: VaultKeys {
+                data_key: [0u8; 32],
+                ingest_secret: [0u8; 32],
+                sync_signing_seed: [0u8; 32],
+            },
+            conn,
         })))
     }
 

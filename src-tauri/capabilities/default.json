@@ -7,6 +7,9 @@
     "core:default",
     "opener:default",
     "wdio:default",
-    "wdio-webdriver:default"
+    "wdio-webdriver:default",
+    "dialog:default",
+    "fs:allow-read-text-file",
+    "fs:scope-home-recursive"
   ]
 }

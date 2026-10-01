@@ -1,6 +1,5 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tauri::State;
 use uuid::Uuid;
 
@@ -164,26 +163,30 @@ fn preview_ofx_inner(
 #[tauri::command]
 pub fn preview_csv_import(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     content: String,
     mapping: ColumnMapping,
     account_id: String,
 ) -> Result<PendingImport, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    preview_csv_inner(&conn, &content, &mapping, &account_id)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    preview_csv_inner(&unlocked.conn, &content, &mapping, &account_id)
 }
 
 #[tauri::command]
 pub fn preview_ofx_import(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     content: String,
     account_id: String,
 ) -> Result<PendingImport, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    preview_ofx_inner(&conn, &content, &account_id)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    preview_ofx_inner(&unlocked.conn, &content, &account_id)
 }
 
 fn apply_categorization_rules_inner(
@@ -422,16 +425,18 @@ fn import_ofx_inner(
 #[tauri::command]
 pub fn import_ofx(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     content: String,
     account_id: String,
     filename: String,
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
-    super::require_unlocked(&vault)?;
-    let mut conn = db.lock().map_err(|e| e.to_string())?;
+    let mut guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_mut().ok_or("locked")?;
     import_ofx_inner(
-        &mut conn,
+        &mut unlocked.conn,
         &content,
         &account_id,
         &filename,
@@ -447,17 +452,19 @@ pub fn parse_csv_preview(content: String) -> Result<CsvPreview, String> {
 #[tauri::command]
 pub fn import_csv(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     content: String,
     mapping: ColumnMapping,
     account_id: String,
     filename: String,
     decisions: Option<Vec<ImportDecision>>,
 ) -> Result<ImportResult, String> {
-    super::require_unlocked(&vault)?;
-    let mut conn = db.lock().map_err(|e| e.to_string())?;
+    let mut guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_mut().ok_or("locked")?;
     import_csv_inner(
-        &mut conn,
+        &mut unlocked.conn,
         &content,
         &mapping,
         &account_id,
@@ -474,13 +481,13 @@ mod tests {
     use crate::storage::seed::{seed_categories, seed_category_groups, seed_income_categories};
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }
 
     fn setup_with_seeds() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

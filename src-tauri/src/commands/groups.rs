@@ -1,7 +1,4 @@
-use chrono::Utc;
-use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -17,11 +14,14 @@ pub struct CategoryGroupRow {
 #[tauri::command]
 pub fn list_category_groups(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<CategoryGroupRow>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    let mut stmt = unlocked
+        .conn
         .prepare("SELECT id, name, sort_order FROM category_groups ORDER BY sort_order")
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -41,16 +41,19 @@ pub fn list_category_groups(
 #[tauri::command]
 pub fn create_category_group(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     name: String,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Group name cannot be blank".into());
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let sort_order: i64 = conn
+    let sort_order: i64 = unlocked
+        .conn
         .query_row(
             "SELECT COALESCE(MAX(sort_order), 0) + 1 FROM category_groups",
             [],
@@ -58,29 +61,34 @@ pub fn create_category_group(
         )
         .map_err(|e| e.to_string())?;
     let id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO category_groups (id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![id, trimmed, sort_order, now],
-    )
-    .map_err(|e| e.to_string())?;
+    let now = chrono::Utc::now().to_rfc3339();
+    unlocked
+        .conn
+        .execute(
+            "INSERT INTO category_groups (id, name, sort_order, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, trimmed, sort_order, now],
+        )
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
 #[tauri::command]
 pub fn update_category_group(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Group name cannot be blank".into());
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let rows = conn
+    let rows = unlocked
+        .conn
         .execute(
             "UPDATE category_groups SET name = ?1 WHERE id = ?2",
             rusqlite::params![trimmed, id],
@@ -95,12 +103,15 @@ pub fn update_category_group(
 #[tauri::command]
 pub fn delete_category_group(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     id: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let assigned: i64 = conn
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    let assigned: i64 = unlocked
+        .conn
         .query_row(
             "SELECT COUNT(*) FROM categories WHERE group_id = ?1",
             rusqlite::params![id],
@@ -112,7 +123,8 @@ pub fn delete_category_group(
             "Cannot delete group {id}: {assigned} categories are still assigned to it"
         ));
     }
-    let rows = conn
+    let rows = unlocked
+        .conn
         .execute(
             "DELETE FROM category_groups WHERE id = ?1",
             rusqlite::params![id],
@@ -127,13 +139,16 @@ pub fn delete_category_group(
 #[tauri::command]
 pub fn assign_category_to_group(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     category_id: String,
     group_id: Option<String>,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let rows = conn
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    let rows = unlocked
+        .conn
         .execute(
             "UPDATE categories SET group_id = ?1 WHERE id = ?2",
             rusqlite::params![group_id, category_id],
@@ -153,9 +168,11 @@ mod tests {
         migrations::run_migrations,
         seed::{seed_categories, seed_category_groups},
     };
+    use chrono::Utc;
+    use rusqlite::Connection;
 
     fn test_db() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

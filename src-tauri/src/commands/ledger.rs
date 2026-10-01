@@ -1,30 +1,24 @@
-use rusqlite::Connection;
-use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 
 use crate::ledger::engine::{self, PostingInput};
-use crate::storage::{db::open_connection, migrations::run_migrations};
 use crate::types::Cents;
 
-/// Open the database, run pending migrations, and register the connection in
-/// Tauri state. Must be called once at app startup before any other command
-/// that needs the database. Future commands extract it via State<Mutex<Connection>>.
+/// Create the app data directory and handle cold-start migration.
+/// Does not open the encrypted database (that happens at vault unlock).
 #[tauri::command]
 pub fn init_db(app: AppHandle) -> Result<(), String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-
     std::fs::create_dir_all(&app_dir).map_err(|e| e.to_string())?;
 
+    // If manila.db exists but vault.json does not, this is a pre-encryption install.
+    // Rename the plain db so the new encrypted db starts fresh.
     let db_path = app_dir.join("manila.db");
-    let path_str = db_path.to_str().ok_or("app data path is not valid UTF-8")?;
+    let vault_path = app_dir.join("vault.json");
+    if db_path.exists() && !vault_path.exists() {
+        let backup = app_dir.join("manila_plaintext_backup.db");
+        std::fs::rename(&db_path, &backup).map_err(|e| e.to_string())?;
+    }
 
-    let mut conn = open_connection(path_str).map_err(|e| e.to_string())?;
-    run_migrations(&mut conn).map_err(|e| e.to_string())?;
-    crate::storage::seed::seed_categories(&conn).map_err(|e| e.to_string())?;
-    crate::storage::seed::seed_category_groups(&conn).map_err(|e| e.to_string())?;
-    crate::storage::seed::seed_income_categories(&conn).map_err(|e| e.to_string())?;
-
-    app.manage(Mutex::new(conn));
     Ok(())
 }
 
@@ -35,15 +29,17 @@ pub fn init_db(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn create_transfer(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     from_account_id: String,
     to_account_id: String,
     date: String,
     amount_cents: Cents,
     description: String,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
-    let mut conn = db.lock().map_err(|e| e.to_string())?;
+    let mut guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_mut().ok_or("locked")?;
     let postings = [
         PostingInput {
             account_id: from_account_id.clone().into(),
@@ -55,7 +51,7 @@ pub fn create_transfer(
         },
     ];
     engine::create_transfer(
-        &mut conn,
+        &mut unlocked.conn,
         &from_account_id,
         &date,
         -amount_cents,

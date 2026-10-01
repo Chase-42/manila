@@ -26,7 +26,16 @@ pub struct VaultKeys {
     pub sync_signing_seed: [u8; 32],
 }
 
-pub struct VaultState(pub Mutex<Option<VaultKeys>>);
+// Bundled vault keys + live database connection. Exists only while unlocked.
+// Dropping this clears the keys (via ZeroizeOnDrop) and closes the DB connection.
+pub struct UnlockedVault {
+    // keys is retained for 14b field-level encryption; unused until then.
+    #[allow(dead_code)]
+    pub keys: VaultKeys,
+    pub conn: rusqlite::Connection,
+}
+
+pub struct VaultState(pub Mutex<Option<UnlockedVault>>);
 
 // Holds the vault secret transiently during the recovery phrase ceremony.
 // Set by create_vault, cleared by acknowledge_recovery_phrase.

@@ -194,7 +194,7 @@ mod tests {
     use crate::storage::{db::open_connection, migrations::run_migrations};
 
     fn seeded_conn() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

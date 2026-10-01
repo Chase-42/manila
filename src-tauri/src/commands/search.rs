@@ -1,5 +1,4 @@
 use rusqlite::Connection;
-use std::sync::Mutex;
 use tauri::State;
 
 use crate::commands::transactions::TransactionRow;
@@ -112,15 +111,17 @@ fn search_transactions_inner(
 #[tauri::command]
 pub fn search_transactions(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     query: String,
 ) -> Result<Vec<TransactionRow>, String> {
-    super::require_unlocked(&vault)?;
     if query.is_empty() {
         return Ok(vec![]);
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    search_transactions_inner(&conn, &query)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    search_transactions_inner(&unlocked.conn, &query)
 }
 
 #[cfg(test)]
@@ -131,7 +132,7 @@ mod tests {
     use uuid::Uuid;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }

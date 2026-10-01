@@ -7,7 +7,7 @@ mod ledger;
 mod storage;
 pub(crate) mod types;
 
-use crypto::{OnboardingState, VaultState};
+use crypto::{OnboardingState, UnlockedVault, VaultState};
 
 // Tauri's Builder::run() returns Result but the entry point has nowhere to propagate it.
 #[allow(clippy::expect_used)]
@@ -21,8 +21,10 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
-        .manage(VaultState(std::sync::Mutex::new(None)))
+        .manage(VaultState(std::sync::Mutex::new(None::<UnlockedVault>)))
         .manage(OnboardingState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,

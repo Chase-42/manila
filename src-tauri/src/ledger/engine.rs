@@ -136,7 +136,7 @@ mod tests {
     use crate::storage::migrations::run_migrations;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn.execute_batch(
             "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)

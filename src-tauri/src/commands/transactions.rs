@@ -1,6 +1,5 @@
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use std::sync::Mutex;
 use tauri::{AppHandle, Manager, State};
 use ts_rs::TS;
 
@@ -140,26 +139,30 @@ fn upsert_transaction_meta_inner(conn: &Connection, args: &UpsertMetaArgs) -> Re
 #[tauri::command]
 pub fn list_transactions(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
 ) -> Result<Vec<TransactionRow>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    list_transactions_inner(&conn)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    list_transactions_inner(&unlocked.conn)
 }
 
 #[tauri::command]
 pub fn upsert_transaction_meta(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<Mutex<Connection>>,
     transaction_id: String,
     notes: String,
     tags: Vec<String>,
     reviewed: bool,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     upsert_transaction_meta_inner(
-        &conn,
+        &unlocked.conn,
         &UpsertMetaArgs {
             transaction_id,
             notes,
@@ -264,11 +267,13 @@ fn export_transactions_csv_inner(conn: &Connection) -> Result<Vec<u8>, String> {
 pub fn export_transactions_csv(
     vault: State<'_, crate::crypto::VaultState>,
     app: AppHandle,
-    db: State<Mutex<Connection>>,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let csv_bytes = export_transactions_csv_inner(&conn)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    let csv_bytes = export_transactions_csv_inner(&unlocked.conn)?;
 
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("manila-export-{}.csv", date_str);
@@ -297,7 +302,7 @@ mod tests {
     use uuid::Uuid;
 
     fn setup() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         conn
     }

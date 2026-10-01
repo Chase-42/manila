@@ -3,7 +3,6 @@
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -61,12 +60,14 @@ fn days_remaining_in_month(today: &str) -> Result<i64, String> {
 #[tauri::command]
 pub fn get_home_view(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     today: String,
 ) -> Result<HomeView, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    get_home_view_inner(&conn, &today)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    get_home_view_inner(&unlocked.conn, &today)
 }
 
 fn get_home_view_inner(conn: &Connection, today: &str) -> Result<HomeView, String> {
@@ -227,12 +228,14 @@ struct RawBudgetRow {
 #[tauri::command]
 pub fn get_budget_month(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     month: String,
 ) -> Result<BudgetMonthView, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    get_budget_month_inner(&conn, &month)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    get_budget_month_inner(&unlocked.conn, &month)
 }
 
 fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthView, String> {
@@ -479,17 +482,19 @@ fn get_budget_month_inner(conn: &Connection, month: &str) -> Result<BudgetMonthV
 #[tauri::command]
 pub fn set_allocation(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     category_id: String,
     month: String,
     new_amount_cents: Cents,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     if new_amount_cents < Cents::zero() {
         return Err("Allocation amount must be non-negative".into());
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    set_allocation_inner(&conn, &category_id, &month, new_amount_cents)
+    set_allocation_inner(&unlocked.conn, &category_id, &month, new_amount_cents)
 }
 
 fn set_allocation_inner(
@@ -546,12 +551,14 @@ fn next_month(month: &str) -> Result<String, String> {
 #[tauri::command]
 pub fn close_month(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     month: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    close_month_inner(&conn, &month)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    close_month_inner(&unlocked.conn, &month)
 }
 
 fn close_month_inner(conn: &Connection, month: &str) -> Result<(), String> {
@@ -637,16 +644,18 @@ fn close_month_inner(conn: &Connection, month: &str) -> Result<(), String> {
 #[tauri::command]
 pub fn reallocate(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     from_category_id: String,
     to_category_id: String,
     month: String,
     amount_cents: Cents,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     reallocate_inner(
-        &conn,
+        &unlocked.conn,
         &from_category_id,
         &to_category_id,
         &month,
@@ -715,7 +724,7 @@ mod tests {
     use uuid::Uuid;
 
     fn test_db() -> Connection {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

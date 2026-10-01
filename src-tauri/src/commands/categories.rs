@@ -1,7 +1,6 @@
 use chrono::Utc;
 use rusqlite::Connection;
 use serde::Serialize;
-use std::sync::Mutex;
 use tauri::State;
 use ts_rs::TS;
 use uuid::Uuid;
@@ -20,11 +19,14 @@ pub struct CategoryRow {
 #[tauri::command]
 pub fn list_categories(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<CategoryRow>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let mut stmt = conn
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    let mut stmt = unlocked
+        .conn
         .prepare("SELECT id, name, kind, group_id, created_at FROM categories ORDER BY kind, name")
         .map_err(|e| e.to_string())?;
     let rows = stmt
@@ -46,40 +48,47 @@ pub fn list_categories(
 #[tauri::command]
 pub fn create_category(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     name: String,
     kind: String,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Category name cannot be blank".into());
     }
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    conn.execute(
-        "INSERT INTO categories (id, name, kind, created_at) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![id, trimmed, kind, now],
-    )
-    .map_err(|e| e.to_string())?;
+    unlocked
+        .conn
+        .execute(
+            "INSERT INTO categories (id, name, kind, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![id, trimmed, kind, now],
+        )
+        .map_err(|e| e.to_string())?;
     Ok(id)
 }
 
 #[tauri::command]
 pub fn update_category(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     id: String,
     name: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("Category name cannot be blank".into());
     }
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    let rows = conn
+    let rows = unlocked
+        .conn
         .execute(
             "UPDATE categories SET name = ?1 WHERE id = ?2",
             rusqlite::params![trimmed, id],
@@ -161,14 +170,16 @@ fn upsert_split_inner(
 #[tauri::command]
 pub fn upsert_split(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     transaction_id: String,
     target_type: String,
     target_id: String,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    upsert_split_inner(&conn, &transaction_id, &target_type, &target_id)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    upsert_split_inner(&unlocked.conn, &transaction_id, &target_type, &target_id)
 }
 
 #[derive(Serialize, TS)]
@@ -232,34 +243,40 @@ fn set_income_category_hidden_inner(
 #[tauri::command]
 pub fn list_income_categories(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
 ) -> Result<Vec<IncomeCategoryItem>, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    list_income_categories_inner(&conn)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    list_income_categories_inner(&unlocked.conn)
 }
 
 #[tauri::command]
 pub fn create_income_category(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     name: String,
 ) -> Result<String, String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    create_income_category_inner(&conn, &name)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    create_income_category_inner(&unlocked.conn, &name)
 }
 
 #[tauri::command]
 pub fn set_income_category_hidden(
     vault: State<'_, crate::crypto::VaultState>,
-    db: State<'_, Mutex<Connection>>,
     id: String,
     hidden: bool,
 ) -> Result<(), String> {
-    super::require_unlocked(&vault)?;
-    let conn = db.lock().map_err(|e| e.to_string())?;
-    set_income_category_hidden_inner(&conn, &id, hidden)
+    let guard = vault
+        .0
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    set_income_category_hidden_inner(&unlocked.conn, &id, hidden)
 }
 
 #[cfg(test)]
@@ -298,7 +315,7 @@ mod tests {
     }
 
     fn test_db() -> Mutex<Connection> {
-        let mut conn = open_connection(":memory:").unwrap();
+        let mut conn = open_connection(":memory:", None).unwrap();
         run_migrations(&mut conn).unwrap();
         seed_categories(&conn).unwrap();
         seed_category_groups(&conn).unwrap();

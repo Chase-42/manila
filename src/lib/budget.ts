@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { parseCentsInput } from "./money";
 import type { BudgetMonthView } from "./generated/BudgetMonthView";
 import type { HomeView } from "./generated/HomeView";
 
@@ -47,17 +48,14 @@ export async function reallocate(
   });
 }
 
-export function parseCentsFromString(val: string): number {
-  const n = parseFloat(val);
-  return isNaN(n) ? 0 : Math.round(n * 100);
-}
+export { parseCentsInput as parseCentsFromString };
 
 export function validateReallocation(
   fromId: string,
   toId: string,
   amountStr: string,
 ): string | null {
-  if (parseCentsFromString(amountStr) <= 0) return "Amount must be greater than zero.";
+  if (parseCentsInput(amountStr) <= 0) return "Amount must be greater than zero.";
   if (!fromId) return "Select a source category.";
   if (!toId) return "Select a destination category.";
   if (fromId === toId) return "Source and destination must be different.";

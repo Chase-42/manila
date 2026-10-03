@@ -2,20 +2,55 @@ use rusqlite::Connection;
 use tauri::State;
 
 use crate::commands::transactions::TransactionRow;
+use crate::crypto::field::open_field;
 
 /// Rebuilds the FTS index from the live raw_records + transaction_meta join.
-/// Call after any mutation that inserts new raw_records or changes notes.
-pub(crate) fn rebuild_fts(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "DELETE FROM transactions_fts;
-         INSERT INTO transactions_fts (rowid, description, notes, transaction_id)
-         SELECT rr.rowid, rr.description, COALESCE(tm.notes, ''), rr.transaction_id
-         FROM raw_records rr
-         LEFT JOIN transaction_meta tm ON tm.transaction_id = rr.transaction_id
-         WHERE NOT EXISTS (
-             SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
-         );",
-    )
+/// Decrypts each description and notes value before indexing so FTS sees plaintext.
+pub(crate) fn rebuild_fts(conn: &Connection, key: &[u8; 32]) -> Result<(), String> {
+    conn.execute("DELETE FROM transactions_fts", [])
+        .map_err(|e| e.to_string())?;
+    // Collect rows into an owned Vec before re-using conn for the insert loop.
+    // The block scope drops `stmt` before `conn.execute` is called below.
+    let source_rows: Vec<(i64, String, String, String)> = {
+        let mut stmt = conn
+            .prepare(
+                "SELECT rr.rowid, rr.description, COALESCE(tm.notes, ''), rr.transaction_id
+                 FROM raw_records rr
+                 LEFT JOIN transaction_meta tm ON tm.transaction_id = rr.transaction_id
+                 WHERE NOT EXISTS (
+                     SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
+                 )",
+            )
+            .map_err(|e| e.to_string())?;
+        // Use match instead of ? so the ControlFlow temp does not borrow stmt through MappedRows.
+        let iter = match stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+            ))
+        }) {
+            Ok(iter) => iter,
+            Err(e) => return Err(e.to_string()),
+        };
+        let mut rows = Vec::new();
+        for row in iter {
+            rows.push(row.map_err(|e| e.to_string())?);
+        }
+        rows
+    };
+    for (rowid, description, notes, transaction_id) in source_rows {
+        let description = open_field(key, &description).map_err(|e| e.to_string())?;
+        let notes = open_field(key, &notes).map_err(|e| e.to_string())?;
+        conn.execute(
+            "INSERT INTO transactions_fts (rowid, description, notes, transaction_id)
+             VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![rowid, description, notes, transaction_id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn sanitize_fts_query(raw: &str) -> String {
@@ -25,6 +60,7 @@ fn sanitize_fts_query(raw: &str) -> String {
 fn search_transactions_inner(
     conn: &Connection,
     query: &str,
+    key: &[u8; 32],
 ) -> Result<Vec<TransactionRow>, String> {
     if query.is_empty() {
         return Ok(vec![]);
@@ -89,6 +125,9 @@ fn search_transactions_inner(
             category_id,
             category_name,
         ) = row.map_err(|e| e.to_string())?;
+        let description = open_field(key, &description).map_err(|e| e.to_string())?;
+        let notes = open_field(key, &notes).map_err(|e| e.to_string())?;
+        let tags_json = open_field(key, &tags_json).map_err(|e| e.to_string())?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         result.push(TransactionRow {
             id,
@@ -121,7 +160,7 @@ pub fn search_transactions(
         .lock()
         .map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
-    search_transactions_inner(&unlocked.conn, &query)
+    search_transactions_inner(&unlocked.conn, &query, &unlocked.keys.data_key)
 }
 
 #[cfg(test)]
@@ -170,7 +209,7 @@ mod tests {
     #[test]
     fn empty_query_returns_empty() {
         let conn = setup();
-        let result = search_transactions_inner(&conn, "").unwrap();
+        let result = search_transactions_inner(&conn, "", &[0u8; 32]).unwrap();
         assert!(result.is_empty());
     }
 
@@ -179,9 +218,9 @@ mod tests {
         let conn = setup();
         let account_id = insert_account(&conn);
         insert_transaction(&conn, &account_id, "Coffee Shop");
-        rebuild_fts(&conn).unwrap();
+        rebuild_fts(&conn, &[0u8; 32]).unwrap();
 
-        let result = search_transactions_inner(&conn, "xyznosuchthing").unwrap();
+        let result = search_transactions_inner(&conn, "xyznosuchthing", &[0u8; 32]).unwrap();
         assert!(result.is_empty());
     }
 
@@ -191,9 +230,9 @@ mod tests {
         let account_id = insert_account(&conn);
         let target_id = insert_transaction(&conn, &account_id, "Whole Foods Market");
         insert_transaction(&conn, &account_id, "Coffee Shop");
-        rebuild_fts(&conn).unwrap();
+        rebuild_fts(&conn, &[0u8; 32]).unwrap();
 
-        let result = search_transactions_inner(&conn, "Whole Foods").unwrap();
+        let result = search_transactions_inner(&conn, "Whole Foods", &[0u8; 32]).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, target_id);
     }
@@ -212,11 +251,42 @@ mod tests {
         )
         .unwrap();
 
-        rebuild_fts(&conn).unwrap();
+        rebuild_fts(&conn, &[0u8; 32]).unwrap();
 
-        let result = search_transactions_inner(&conn, "birthday").unwrap();
+        let result = search_transactions_inner(&conn, "birthday", &[0u8; 32]).unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, target_id);
+    }
+
+    #[test]
+    fn fts_finds_encrypted_description_after_rebuild() {
+        use crate::crypto::field::seal_field;
+        let key = [0x42u8; 32];
+        let conn = setup();
+        let account_id = insert_account(&conn);
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        let sealed = seal_field(&key, "Whole Foods Market");
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id,
+              date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, '2026-01-15', -1000, ?4, '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("test|{}", rr_id), sealed],
+        )
+        .unwrap();
+
+        rebuild_fts(&conn, &key).unwrap();
+
+        let results = search_transactions_inner(&conn, "Whole Foods", &key).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, tx_id);
+        assert_eq!(results[0].description, "Whole Foods Market");
     }
 
     #[test]

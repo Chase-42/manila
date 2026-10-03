@@ -4,6 +4,7 @@ use tauri::State;
 use uuid::Uuid;
 
 use crate::commands::search::rebuild_fts;
+use crate::crypto::field::seal_field;
 use crate::import::csv::{self, ColumnMapping, CsvPreview};
 use crate::import::dedup::{self, Candidate};
 use crate::import::ofx;
@@ -51,11 +52,12 @@ fn csv_source_id(account_id: &str, date: &str, amount_cents: Cents, description:
 
 fn build_pending_import(
     conn: &Connection,
+    key: &[u8; 32],
     account_id: &str,
     candidates: Vec<Candidate>,
     errors: Vec<String>,
-) -> PendingImport {
-    let classified = dedup::classify_candidates(conn, account_id, candidates);
+) -> Result<PendingImport, String> {
+    let classified = dedup::classify_candidates(conn, key, account_id, candidates)?;
 
     let mut new_count: u32 = 0;
     let mut exact_duplicate_count: u32 = 0;
@@ -81,16 +83,17 @@ fn build_pending_import(
         }
     }
 
-    PendingImport {
+    Ok(PendingImport {
         new_count,
         exact_duplicate_count,
         uncertain,
         errors,
-    }
+    })
 }
 
 fn preview_csv_inner(
     conn: &Connection,
+    key: &[u8; 32],
     content: &str,
     mapping: &ColumnMapping,
     account_id: &str,
@@ -121,11 +124,12 @@ fn preview_csv_inner(
         }
     }
 
-    Ok(build_pending_import(conn, account_id, candidates, errors))
+    build_pending_import(conn, key, account_id, candidates, errors)
 }
 
 fn preview_ofx_inner(
     conn: &Connection,
+    key: &[u8; 32],
     content: &str,
     account_id: &str,
 ) -> Result<PendingImport, String> {
@@ -157,7 +161,7 @@ fn preview_ofx_inner(
         }
     }
 
-    Ok(build_pending_import(conn, account_id, candidates, errors))
+    build_pending_import(conn, key, account_id, candidates, errors)
 }
 
 #[tauri::command]
@@ -172,7 +176,13 @@ pub fn preview_csv_import(
         .lock()
         .map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
-    preview_csv_inner(&unlocked.conn, &content, &mapping, &account_id)
+    preview_csv_inner(
+        &unlocked.conn,
+        &unlocked.keys.data_key,
+        &content,
+        &mapping,
+        &account_id,
+    )
 }
 
 #[tauri::command]
@@ -186,7 +196,12 @@ pub fn preview_ofx_import(
         .lock()
         .map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
-    preview_ofx_inner(&unlocked.conn, &content, &account_id)
+    preview_ofx_inner(
+        &unlocked.conn,
+        &unlocked.keys.data_key,
+        &content,
+        &account_id,
+    )
 }
 
 fn apply_categorization_rules_inner(
@@ -220,8 +235,10 @@ fn apply_categorization_rules_inner(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn commit_records(
     conn: &mut Connection,
+    key: &[u8; 32],
     source_type: &str,
     account_id: &str,
     filename: &str,
@@ -283,6 +300,9 @@ fn commit_records(
         )
         .map_err(|e| e.to_string())?;
 
+        let description_sealed = seal_field(key, &candidate.description);
+        let raw_json_sealed = seal_field(key, &candidate.raw_json);
+
         tx.execute(
             "INSERT INTO raw_records
              (id, transaction_id, supersedes_id, import_batch_id,
@@ -295,8 +315,8 @@ fn commit_records(
                 candidate.source_id,
                 candidate.date,
                 candidate.amount_cents,
-                candidate.description,
-                candidate.raw_json,
+                description_sealed,
+                raw_json_sealed,
             ],
         )
         .map_err(|e| e.to_string())?;
@@ -323,6 +343,7 @@ fn commit_records(
 
 fn import_csv_inner(
     conn: &mut Connection,
+    key: &[u8; 32],
     content: &str,
     mapping: &ColumnMapping,
     account_id: &str,
@@ -355,9 +376,10 @@ fn import_csv_inner(
         }
     }
 
-    let classified = dedup::classify_candidates(conn, account_id, candidates);
+    let classified = dedup::classify_candidates(conn, key, account_id, candidates)?;
     let result = commit_records(
         conn,
+        key,
         "csv",
         account_id,
         filename,
@@ -366,13 +388,14 @@ fn import_csv_inner(
         parse_errors,
     )?;
     if result.imported_count > 0 {
-        rebuild_fts(conn).map_err(|e| e.to_string())?;
+        rebuild_fts(conn, key)?;
     }
     Ok(result)
 }
 
 fn import_ofx_inner(
     conn: &mut Connection,
+    key: &[u8; 32],
     content: &str,
     account_id: &str,
     filename: &str,
@@ -406,9 +429,10 @@ fn import_ofx_inner(
         }
     }
 
-    let classified = dedup::classify_candidates(conn, account_id, candidates);
+    let classified = dedup::classify_candidates(conn, key, account_id, candidates)?;
     let result = commit_records(
         conn,
+        key,
         "ofx",
         account_id,
         filename,
@@ -417,7 +441,7 @@ fn import_ofx_inner(
         parse_errors,
     )?;
     if result.imported_count > 0 {
-        rebuild_fts(conn).map_err(|e| e.to_string())?;
+        rebuild_fts(conn, key)?;
     }
     Ok(result)
 }
@@ -437,6 +461,7 @@ pub fn import_ofx(
     let unlocked = guard.as_mut().ok_or("locked")?;
     import_ofx_inner(
         &mut unlocked.conn,
+        &unlocked.keys.data_key,
         &content,
         &account_id,
         &filename,
@@ -465,6 +490,7 @@ pub fn import_csv(
     let unlocked = guard.as_mut().ok_or("locked")?;
     import_csv_inner(
         &mut unlocked.conn,
+        &unlocked.keys.data_key,
         &content,
         &mapping,
         &account_id,
@@ -536,6 +562,7 @@ mod tests {
 
         let result = import_csv_inner(
             &mut conn,
+            &[0u8; 32],
             THREE_ROW_CSV,
             &mapping,
             &account_id,
@@ -607,8 +634,15 @@ mod tests {
         let mut conn = setup();
         let account_id = insert_account(&conn);
 
-        let result =
-            import_ofx_inner(&mut conn, TWO_TXN_OFX, &account_id, "test.ofx", &[]).unwrap();
+        let result = import_ofx_inner(
+            &mut conn,
+            &[0u8; 32],
+            TWO_TXN_OFX,
+            &account_id,
+            "test.ofx",
+            &[],
+        )
+        .unwrap();
 
         assert_eq!(result.imported_count, 2);
         assert_eq!(result.skipped_count, 0);
@@ -653,6 +687,7 @@ mod tests {
 
         let result = import_ofx_inner(
             &mut conn,
+            &[0u8; 32],
             "OFXHEADER:100\n<OFX></OFX>",
             &account_id,
             "empty.ofx",
@@ -674,6 +709,7 @@ mod tests {
         // First import writes 3 records.
         let first = import_csv_inner(
             &mut conn,
+            &[0u8; 32],
             THREE_ROW_CSV,
             &mapping,
             &account_id,
@@ -686,6 +722,7 @@ mod tests {
         // Second import of the same file - all exact dups, nothing written.
         let second = import_csv_inner(
             &mut conn,
+            &[0u8; 32],
             THREE_ROW_CSV,
             &mapping,
             &account_id,
@@ -713,6 +750,7 @@ mod tests {
         // First import via CSV creates source_id like csv|...|...|...|...
         import_csv_inner(
             &mut conn,
+            &[0u8; 32],
             THREE_ROW_CSV,
             &mapping,
             &account_id,
@@ -729,7 +767,8 @@ mod tests {
         // Override source_id by using a different account prefix to simulate a distinct source_id
         // while keeping same date/amount/desc. Here we cheat by creating a candidate directly.
         let source_id = format!("csv|{}|2026-01-15|-4567|Grocery Store", account_id);
-        let preview = preview_csv_inner(&conn, uncertain_csv, &mapping, &account_id).unwrap();
+        let preview =
+            preview_csv_inner(&conn, &[0u8; 32], uncertain_csv, &mapping, &account_id).unwrap();
         // The record is an exact dup (same source_id) so preview should count it as exact.
         assert_eq!(preview.exact_duplicate_count, 1);
         assert_eq!(preview.uncertain.len(), 0);
@@ -740,8 +779,14 @@ mod tests {
     fn preview_csv_all_new_when_no_existing() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let result =
-            preview_csv_inner(&conn, THREE_ROW_CSV, &default_mapping(), &account_id).unwrap();
+        let result = preview_csv_inner(
+            &conn,
+            &[0u8; 32],
+            THREE_ROW_CSV,
+            &default_mapping(),
+            &account_id,
+        )
+        .unwrap();
         assert_eq!(result.new_count, 3);
         assert_eq!(result.exact_duplicate_count, 0);
         assert!(result.uncertain.is_empty());
@@ -755,6 +800,7 @@ mod tests {
         let mapping = default_mapping();
         import_csv_inner(
             &mut conn,
+            &[0u8; 32],
             THREE_ROW_CSV,
             &mapping,
             &account_id,
@@ -762,7 +808,8 @@ mod tests {
             &[],
         )
         .unwrap();
-        let result = preview_csv_inner(&conn, THREE_ROW_CSV, &mapping, &account_id).unwrap();
+        let result =
+            preview_csv_inner(&conn, &[0u8; 32], THREE_ROW_CSV, &mapping, &account_id).unwrap();
         assert_eq!(result.new_count, 0);
         assert_eq!(result.exact_duplicate_count, 3);
         assert!(result.uncertain.is_empty());
@@ -772,7 +819,7 @@ mod tests {
     fn preview_ofx_all_new_when_no_existing() {
         let conn = setup();
         let account_id = insert_account(&conn);
-        let result = preview_ofx_inner(&conn, TWO_TXN_OFX, &account_id).unwrap();
+        let result = preview_ofx_inner(&conn, &[0u8; 32], TWO_TXN_OFX, &account_id).unwrap();
         assert_eq!(result.new_count, 2);
         assert_eq!(result.exact_duplicate_count, 0);
         assert!(result.uncertain.is_empty());
@@ -782,8 +829,16 @@ mod tests {
     fn preview_ofx_counts_exact_dups_after_import() {
         let mut conn = setup();
         let account_id = insert_account(&conn);
-        import_ofx_inner(&mut conn, TWO_TXN_OFX, &account_id, "test.ofx", &[]).unwrap();
-        let result = preview_ofx_inner(&conn, TWO_TXN_OFX, &account_id).unwrap();
+        import_ofx_inner(
+            &mut conn,
+            &[0u8; 32],
+            TWO_TXN_OFX,
+            &account_id,
+            "test.ofx",
+            &[],
+        )
+        .unwrap();
+        let result = preview_ofx_inner(&conn, &[0u8; 32], TWO_TXN_OFX, &account_id).unwrap();
         assert_eq!(result.new_count, 0);
         assert_eq!(result.exact_duplicate_count, 2);
         assert!(result.uncertain.is_empty());
@@ -814,7 +869,16 @@ mod tests {
             debit_col: None,
             credit_col: None,
         };
-        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+        import_csv_inner(
+            &mut conn,
+            &[0u8; 32],
+            csv,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
 
         let split_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM splits", [], |r| r.get(0))
@@ -844,12 +908,51 @@ mod tests {
             debit_col: None,
             credit_col: None,
         };
-        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+        import_csv_inner(
+            &mut conn,
+            &[0u8; 32],
+            csv,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
 
         let split_count: i64 = conn
             .query_row("SELECT COUNT(*) FROM splits", [], |r| r.get(0))
             .unwrap();
         assert_eq!(split_count, 0, "no matching rule means no split");
+    }
+
+    #[test]
+    fn import_encrypts_description_and_raw_json() {
+        let key = [0x42u8; 32];
+        let mut conn = setup();
+        let account_id = insert_account(&conn);
+        let csv = "Date,Description,Amount\n2026-01-15,Grocery Store,-45.67\n";
+        let mapping = ColumnMapping {
+            date_col: "Date".into(),
+            description_col: "Description".into(),
+            amount_col: Some("Amount".into()),
+            flip_sign: false,
+            debit_col: None,
+            credit_col: None,
+        };
+        import_csv_inner(&mut conn, &key, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+
+        let (description, raw_json): (String, String) = conn
+            .query_row(
+                "SELECT description, raw_json FROM raw_records LIMIT 1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(
+            description.starts_with("v1:"),
+            "description must be encrypted"
+        );
+        assert!(raw_json.starts_with("v1:"), "raw_json must be encrypted");
     }
 
     #[test]
@@ -934,7 +1037,16 @@ mod tests {
             debit_col: None,
             credit_col: None,
         };
-        import_csv_inner(&mut conn, csv, &mapping, &account_id, "test.csv", &[]).unwrap();
+        import_csv_inner(
+            &mut conn,
+            &[0u8; 32],
+            csv,
+            &mapping,
+            &account_id,
+            "test.csv",
+            &[],
+        )
+        .unwrap();
 
         let target_id: String = conn
             .query_row("SELECT target_id FROM splits", [], |r| r.get(0))

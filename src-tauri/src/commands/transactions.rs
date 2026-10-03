@@ -4,6 +4,7 @@ use tauri::{AppHandle, Manager, State};
 use ts_rs::TS;
 
 use crate::commands::search::rebuild_fts;
+use crate::crypto::field::{open_field, seal_field};
 use crate::types::Cents;
 
 #[derive(Debug, Serialize, TS)]
@@ -25,7 +26,10 @@ pub struct TransactionRow {
     pub category_name: Option<String>,
 }
 
-fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, String> {
+fn list_transactions_inner(
+    conn: &Connection,
+    key: &[u8; 32],
+) -> Result<Vec<TransactionRow>, String> {
     // The current raw_record is the one no other row supersedes.
     let mut stmt = conn
         .prepare(
@@ -87,6 +91,9 @@ fn list_transactions_inner(conn: &Connection) -> Result<Vec<TransactionRow>, Str
             category_id,
             category_name,
         ) = row.map_err(|e| e.to_string())?;
+        let description = open_field(key, &description).map_err(|e| e.to_string())?;
+        let notes = open_field(key, &notes).map_err(|e| e.to_string())?;
+        let tags_json = open_field(key, &tags_json).map_err(|e| e.to_string())?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         result.push(TransactionRow {
             id,
@@ -115,8 +122,14 @@ pub struct UpsertMetaArgs {
     pub reviewed: bool,
 }
 
-fn upsert_transaction_meta_inner(conn: &Connection, args: &UpsertMetaArgs) -> Result<(), String> {
+fn upsert_transaction_meta_inner(
+    conn: &Connection,
+    key: &[u8; 32],
+    args: &UpsertMetaArgs,
+) -> Result<(), String> {
     let tags_json = serde_json::to_string(&args.tags).map_err(|e| e.to_string())?;
+    let notes_sealed = seal_field(key, &args.notes);
+    let tags_sealed = seal_field(key, &tags_json);
     let reviewed_int: i64 = if args.reviewed { 1 } else { 0 };
 
     conn.execute(
@@ -127,11 +140,11 @@ fn upsert_transaction_meta_inner(conn: &Connection, args: &UpsertMetaArgs) -> Re
              tags = excluded.tags,
              reviewed = excluded.reviewed,
              updated_at = excluded.updated_at",
-        rusqlite::params![args.transaction_id, args.notes, tags_json, reviewed_int],
+        rusqlite::params![args.transaction_id, notes_sealed, tags_sealed, reviewed_int],
     )
     .map_err(|e| e.to_string())?;
 
-    rebuild_fts(conn).map_err(|e| e.to_string())?;
+    rebuild_fts(conn, key)?;
 
     Ok(())
 }
@@ -145,7 +158,7 @@ pub fn list_transactions(
         .lock()
         .map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
-    list_transactions_inner(&unlocked.conn)
+    list_transactions_inner(&unlocked.conn, &unlocked.keys.data_key)
 }
 
 #[tauri::command]
@@ -163,6 +176,7 @@ pub fn upsert_transaction_meta(
     let unlocked = guard.as_ref().ok_or("locked")?;
     upsert_transaction_meta_inner(
         &unlocked.conn,
+        &unlocked.keys.data_key,
         &UpsertMetaArgs {
             transaction_id,
             notes,
@@ -172,7 +186,7 @@ pub fn upsert_transaction_meta(
     )
 }
 
-fn export_transactions_csv_inner(conn: &Connection) -> Result<Vec<u8>, String> {
+fn export_transactions_csv_inner(conn: &Connection, key: &[u8; 32]) -> Result<Vec<u8>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT a.name,
@@ -236,6 +250,9 @@ fn export_transactions_csv_inner(conn: &Connection) -> Result<Vec<u8>, String> {
             category,
         ) = row.map_err(|e| e.to_string())?;
 
+        let description = open_field(key, &description).map_err(|e| e.to_string())?;
+        let notes = open_field(key, &notes).map_err(|e| e.to_string())?;
+        let tags_json = open_field(key, &tags_json).map_err(|e| e.to_string())?;
         let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
         let tags_str = tags.join(";");
         let sign = if display_amount_cents < Cents::zero() {
@@ -273,7 +290,7 @@ pub fn export_transactions_csv(
         .lock()
         .map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
-    let csv_bytes = export_transactions_csv_inner(&unlocked.conn)?;
+    let csv_bytes = export_transactions_csv_inner(&unlocked.conn, &unlocked.keys.data_key)?;
 
     let date_str = chrono::Local::now().format("%Y-%m-%d").to_string();
     let filename = format!("manila-export-{}.csv", date_str);
@@ -348,7 +365,7 @@ mod tests {
         let account_id = insert_account(&conn);
         insert_transaction_with_record(&conn, &account_id, "2026-01-15", -4567, "Grocery Store");
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].notes, "");
         assert!(rows[0].tags.is_empty());
@@ -377,7 +394,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         let row = rows.iter().find(|r| r.id == tx_id).unwrap();
         assert_eq!(row.category_type.as_deref(), Some("envelope"));
         assert_eq!(row.category_id.as_deref(), Some(cat_id.as_str()));
@@ -404,7 +421,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         let row = rows.iter().find(|r| r.id == tx_id).unwrap();
         assert_eq!(row.category_type.as_deref(), Some("income"));
         assert_eq!(row.category_id.as_deref(), Some(ic_id.as_str()));
@@ -417,7 +434,7 @@ mod tests {
         let account_id = insert_account(&conn);
         insert_transaction_with_record(&conn, &account_id, "2026-03-10", -2000, "Coffee Shop");
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         assert_eq!(rows[0].date, "2026-03-10");
         assert_eq!(rows[0].amount_cents, Cents(-2000));
         assert_eq!(rows[0].description, "Coffee Shop");
@@ -433,6 +450,7 @@ mod tests {
 
         upsert_transaction_meta_inner(
             &conn,
+            &[0u8; 32],
             &UpsertMetaArgs {
                 transaction_id: tx_id.clone(),
                 notes: "work meal".to_string(),
@@ -442,7 +460,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         let row = rows.iter().find(|r| r.id == tx_id).unwrap();
         assert_eq!(row.notes, "work meal");
         assert_eq!(row.tags, vec!["food", "work"]);
@@ -457,6 +475,7 @@ mod tests {
 
         upsert_transaction_meta_inner(
             &conn,
+            &[0u8; 32],
             &UpsertMetaArgs {
                 transaction_id: tx_id.clone(),
                 notes: "first note".to_string(),
@@ -468,6 +487,7 @@ mod tests {
 
         upsert_transaction_meta_inner(
             &conn,
+            &[0u8; 32],
             &UpsertMetaArgs {
                 transaction_id: tx_id.clone(),
                 notes: "updated note".to_string(),
@@ -477,7 +497,7 @@ mod tests {
         )
         .unwrap();
 
-        let rows = list_transactions_inner(&conn).unwrap();
+        let rows = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         let row = rows.iter().find(|r| r.id == tx_id).unwrap();
         assert_eq!(row.notes, "updated note");
         assert_eq!(row.tags, vec!["new"]);
@@ -500,11 +520,12 @@ mod tests {
         let tx_id =
             insert_transaction_with_record(&conn, &account_id, "2026-02-14", -3000, "Dinner");
 
-        let before = list_transactions_inner(&conn).unwrap();
+        let before = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         assert_eq!(before[0].notes, "");
 
         upsert_transaction_meta_inner(
             &conn,
+            &[0u8; 32],
             &UpsertMetaArgs {
                 transaction_id: tx_id,
                 notes: "valentines".to_string(),
@@ -514,7 +535,7 @@ mod tests {
         )
         .unwrap();
 
-        let after = list_transactions_inner(&conn).unwrap();
+        let after = list_transactions_inner(&conn, &[0u8; 32]).unwrap();
         assert_eq!(after[0].notes, "valentines");
     }
 
@@ -552,7 +573,7 @@ mod tests {
         )
         .unwrap();
 
-        let bytes = export_transactions_csv_inner(&conn).unwrap();
+        let bytes = export_transactions_csv_inner(&conn, &[0u8; 32]).unwrap();
         assert!(!bytes.is_empty());
 
         let csv_str = String::from_utf8(bytes).unwrap();
@@ -596,6 +617,43 @@ mod tests {
     }
 
     #[test]
+    fn upsert_meta_encrypts_notes_and_tags() {
+        let key = [0x42u8; 32];
+        let conn = setup();
+        let account_id = insert_account(&conn);
+        let tx_id =
+            insert_transaction_with_record(&conn, &account_id, "2026-01-15", -1000, "Coffee Shop");
+
+        upsert_transaction_meta_inner(
+            &conn,
+            &key,
+            &UpsertMetaArgs {
+                transaction_id: tx_id.clone(),
+                notes: "birthday gift".to_string(),
+                tags: vec!["personal".to_string()],
+                reviewed: false,
+            },
+        )
+        .unwrap();
+
+        let (notes_raw, tags_raw): (String, String) = conn
+            .query_row(
+                "SELECT notes, tags FROM transaction_meta WHERE transaction_id = ?1",
+                rusqlite::params![tx_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert!(notes_raw.starts_with("v1:"), "notes must be encrypted");
+        assert!(tags_raw.starts_with("v1:"), "tags must be encrypted");
+
+        // Round-trip: reading back decrypts to original values.
+        let rows = list_transactions_inner(&conn, &key).unwrap();
+        let row = rows.iter().find(|r| r.id == tx_id).unwrap();
+        assert_eq!(row.notes, "birthday gift");
+        assert_eq!(row.tags, vec!["personal".to_string()]);
+    }
+
+    #[test]
     fn upsert_transaction_meta_gate_rejects_locked() {
         use crate::crypto::VaultState;
         use std::sync::Mutex;
@@ -615,5 +673,33 @@ mod tests {
             crate::commands::require_unlocked(&vault).unwrap_err(),
             "locked"
         );
+    }
+
+    #[test]
+    fn list_decrypts_encrypted_description() {
+        use crate::crypto::field::seal_field;
+        let key = [0x42u8; 32];
+        let conn = setup();
+        let account_id = insert_account(&conn);
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        let sealed = seal_field(&key, "Whole Foods Market");
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id,
+              date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, '2026-01-15', -1000, ?4, '{}', datetime('now'))",
+            rusqlite::params![rr_id, tx_id, format!("test|{}", rr_id), sealed],
+        )
+        .unwrap();
+
+        let rows = list_transactions_inner(&conn, &key).unwrap();
+        let row = rows.iter().find(|r| r.id == tx_id).unwrap();
+        assert_eq!(row.description, "Whole Foods Market");
     }
 }

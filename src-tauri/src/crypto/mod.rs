@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use thiserror::Error;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
+pub mod field;
 pub mod kdf;
 pub mod keys;
 pub mod phrase;
@@ -29,8 +30,6 @@ pub struct VaultKeys {
 // Bundled vault keys + live database connection. Exists only while unlocked.
 // Dropping this clears the keys (via ZeroizeOnDrop) and closes the DB connection.
 pub struct UnlockedVault {
-    // keys is retained for 14b field-level encryption; unused until then.
-    #[allow(dead_code)]
     pub keys: VaultKeys,
     pub conn: rusqlite::Connection,
 }

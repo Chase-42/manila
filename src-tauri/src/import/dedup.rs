@@ -1,3 +1,4 @@
+use crate::crypto::field::open_field;
 use crate::types::Cents;
 use rusqlite::Connection;
 
@@ -25,22 +26,28 @@ pub struct ClassifiedRecord {
 
 pub fn classify_candidates(
     conn: &Connection,
+    key: &[u8; 32],
     account_id: &str,
     candidates: Vec<Candidate>,
-) -> Vec<ClassifiedRecord> {
+) -> Result<Vec<ClassifiedRecord>, String> {
     candidates
         .into_iter()
         .map(|c| {
-            let class = classify_one(conn, account_id, &c);
-            ClassifiedRecord {
+            let class = classify_one(conn, key, account_id, &c)?;
+            Ok(ClassifiedRecord {
                 candidate: c,
                 class,
-            }
+            })
         })
         .collect()
 }
 
-fn classify_one(conn: &Connection, account_id: &str, c: &Candidate) -> DedupClass {
+fn classify_one(
+    conn: &Connection,
+    key: &[u8; 32],
+    account_id: &str,
+    c: &Candidate,
+) -> Result<DedupClass, String> {
     // Exact: same source_id already exists for this account.
     let exact: bool = conn
         .query_row(
@@ -54,35 +61,42 @@ fn classify_one(conn: &Connection, account_id: &str, c: &Candidate) -> DedupClas
         .unwrap_or(false);
 
     if exact {
-        return DedupClass::Exact;
+        return Ok(DedupClass::Exact);
     }
 
-    // Uncertain: same (date, amount, description) for this account, different source_id.
-    let uncertain = conn
-        .query_row(
-            "SELECT r.id, r.source_id FROM raw_records r
+    // SQL equality on description breaks with per-row random nonces, so query by
+    // (date, amount, account) and compare plaintext descriptions in Rust.
+    let mut stmt = conn
+        .prepare(
+            "SELECT r.id, r.source_id, r.description FROM raw_records r
              JOIN transactions t ON t.id = r.transaction_id
-             WHERE r.date = ?1 AND r.amount_cents = ?2 AND r.description = ?3
-               AND t.account_id = ?4 AND r.source_id != ?5
-             LIMIT 1",
-            rusqlite::params![
-                c.date,
-                c.amount_cents,
-                c.description,
-                account_id,
-                c.source_id
-            ],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+             WHERE r.date = ?1 AND r.amount_cents = ?2
+               AND t.account_id = ?3 AND r.source_id != ?4",
         )
-        .ok();
-
-    match uncertain {
-        Some((existing_raw_record_id, existing_source_id)) => DedupClass::Uncertain {
-            existing_raw_record_id,
-            existing_source_id,
-        },
-        None => DedupClass::New,
+        .map_err(|e| e.to_string())?;
+    let rows = stmt
+        .query_map(
+            rusqlite::params![c.date, c.amount_cents, account_id, c.source_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .map_err(|e| e.to_string())?;
+    for row in rows {
+        let (rr_id, rr_source_id, encrypted_desc) = row.map_err(|e| e.to_string())?;
+        let plaintext = open_field(key, &encrypted_desc).map_err(|e| e.to_string())?;
+        if plaintext == c.description {
+            return Ok(DedupClass::Uncertain {
+                existing_raw_record_id: rr_id,
+                existing_source_id: rr_source_id,
+            });
+        }
     }
+    Ok(DedupClass::New)
 }
 
 #[cfg(test)]
@@ -137,7 +151,7 @@ mod tests {
     #[test]
     fn empty_candidates_returns_empty() {
         let conn = setup();
-        let result = classify_candidates(&conn, "acct-1", vec![]);
+        let result = classify_candidates(&conn, &[0u8; 32], "acct-1", vec![]).unwrap();
         assert!(result.is_empty());
     }
 
@@ -150,7 +164,7 @@ mod tests {
             -4567,
             "Grocery Store",
         )];
-        let result = classify_candidates(&conn, "acct-1", candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], "acct-1", candidates).unwrap();
         assert_eq!(result.len(), 1);
         assert!(matches!(result[0].class, DedupClass::New));
     }
@@ -180,7 +194,7 @@ mod tests {
             -4567,
             "Grocery Store",
         )];
-        let result = classify_candidates(&conn, &account_id, candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], &account_id, candidates).unwrap();
         assert!(matches!(result[0].class, DedupClass::Exact));
     }
 
@@ -209,7 +223,7 @@ mod tests {
             -4567,
             "Grocery Store",
         )];
-        let result = classify_candidates(&conn, &account_id, candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], &account_id, candidates).unwrap();
         match &result[0].class {
             DedupClass::Uncertain {
                 existing_source_id, ..
@@ -248,7 +262,7 @@ mod tests {
             -4567,
             "Grocery Store",
         )];
-        let result = classify_candidates(&conn, &account_id, candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], &account_id, candidates).unwrap();
         assert!(matches!(result[0].class, DedupClass::Exact));
     }
 
@@ -282,7 +296,7 @@ mod tests {
             -4567,
             "Grocery Store",
         )];
-        let result = classify_candidates(&conn, &account_b, candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], &account_b, candidates).unwrap();
         assert!(matches!(result[0].class, DedupClass::New));
     }
 
@@ -318,9 +332,62 @@ mod tests {
             make_candidate("src-uncertain-new", "2026-01-11", -2000, "Gas"), // Uncertain
             make_candidate("src-brand-new", "2026-01-12", -3000, "Restaurant"), // New
         ];
-        let result = classify_candidates(&conn, &account_id, candidates);
+        let result = classify_candidates(&conn, &[0u8; 32], &account_id, candidates).unwrap();
         assert!(matches!(result[0].class, DedupClass::Exact));
         assert!(matches!(result[1].class, DedupClass::Uncertain { .. }));
         assert!(matches!(result[2].class, DedupClass::New));
+    }
+
+    #[test]
+    fn uncertain_match_finds_encrypted_description() {
+        use crate::crypto::field::seal_field;
+        let key = [0x42u8; 32];
+        let conn = setup();
+        let account_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES (?1, 'Checking', 'depository', 'checking', 'Bank', 'USD', datetime('now'))",
+            rusqlite::params![account_id],
+        )
+        .unwrap();
+        let tx_id = Uuid::new_v4().to_string();
+        let rr_id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at) VALUES (?1, ?2, datetime('now'))",
+            rusqlite::params![tx_id, account_id],
+        )
+        .unwrap();
+        let sealed = seal_field(&key, "Grocery Store");
+        conn.execute(
+            "INSERT INTO raw_records
+             (id, transaction_id, supersedes_id, import_batch_id, source_id,
+              date, amount_cents, description, raw_json, created_at)
+             VALUES (?1, ?2, NULL, NULL, ?3, ?4, ?5, ?6, '{}', datetime('now'))",
+            rusqlite::params![
+                rr_id,
+                tx_id,
+                "src-original",
+                "2026-01-15",
+                -4567_i64,
+                sealed
+            ],
+        )
+        .unwrap();
+
+        let candidates = vec![make_candidate(
+            "src-different",
+            "2026-01-15",
+            -4567,
+            "Grocery Store",
+        )];
+        let result = classify_candidates(&conn, &key, &account_id, candidates).unwrap();
+        match &result[0].class {
+            DedupClass::Uncertain {
+                existing_source_id, ..
+            } => {
+                assert_eq!(existing_source_id, "src-original");
+            }
+            _ => panic!("expected Uncertain"),
+        }
     }
 }

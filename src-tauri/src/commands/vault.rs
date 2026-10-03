@@ -7,6 +7,7 @@ use crate::crypto::{
 };
 use crate::storage::{
     db::open_connection,
+    field_migration::encrypt_existing_fields,
     migrations::run_migrations,
     seed::{seed_categories, seed_category_groups, seed_income_categories},
     vault_file::{read_vault_file, write_vault_file, VaultFileConfig},
@@ -39,6 +40,7 @@ fn open_app_db(app_dir: &Path, data_key: &[u8; 32]) -> Result<rusqlite::Connecti
     let path = db_path(app_dir)?;
     let mut conn = open_connection(&path, Some(data_key)).map_err(|e| e.to_string())?;
     run_migrations(&mut conn).map_err(|e| e.to_string())?;
+    encrypt_existing_fields(&mut conn, data_key).map_err(|e| e.to_string())?;
     seed_categories(&conn).map_err(|e| e.to_string())?;
     seed_category_groups(&conn).map_err(|e| e.to_string())?;
     seed_income_categories(&conn).map_err(|e| e.to_string())?;

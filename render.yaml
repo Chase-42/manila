@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: manila-server
+    env: docker
+    dockerfilePath: server/Dockerfile
+    dockerContext: server
+    healthCheckPath: /health
+    envVars:
+      - key: PLAID_CLIENT_ID
+        sync: false
+        value: ""
+      - key: PLAID_SECRET
+        sync: false
+        value: ""
+      - key: PLAID_ENV
+        sync: false
+        value: ""
+      - key: PORT
+        sync: false
+        value: "3000"

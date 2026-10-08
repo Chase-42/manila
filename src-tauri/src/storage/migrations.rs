@@ -15,6 +15,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (10, MIGRATION_010),
     (11, MIGRATION_011),
     // 12 and 13 created vault_config; that table is now vault.json on disk
+    (15, MIGRATION_015),
 ];
 
 const MIGRATION_001: &str = "
@@ -200,6 +201,19 @@ const MIGRATION_011: &str = "
         target_date         TEXT,
         achieved_at         TEXT,
         created_at          TEXT    NOT NULL
+    );
+";
+
+const MIGRATION_015: &str = "
+    CREATE TABLE plaid_connections (
+        id               TEXT NOT NULL PRIMARY KEY,
+        plaid_item_id    TEXT NOT NULL UNIQUE,
+        access_token     TEXT NOT NULL,
+        institution_name TEXT NOT NULL,
+        institution_id   TEXT NOT NULL,
+        account_ids      TEXT NOT NULL,
+        connected_at     TEXT NOT NULL,
+        last_synced_at   TEXT
     );
 ";
 
@@ -557,6 +571,43 @@ mod tests {
                 .unwrap()
                 > 0;
             assert!(col_exists, "goals.{col} should exist after migration 11");
+        }
+    }
+
+    #[test]
+    fn migration_015_creates_plaid_connections() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='plaid_connections'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(exists, "plaid_connections table should exist after migration 15");
+
+        for col in &[
+            "id",
+            "plaid_item_id",
+            "access_token",
+            "institution_name",
+            "institution_id",
+            "account_ids",
+            "connected_at",
+            "last_synced_at",
+        ] {
+            let col_exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('plaid_connections') WHERE name=?1",
+                    [col],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(col_exists, "plaid_connections.{col} should exist after migration 15");
         }
     }
 

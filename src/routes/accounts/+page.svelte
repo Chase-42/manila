@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listAccounts } from "$lib/accounts";
+  import { listPlaidConnections, deletePlaidConnection } from "$lib/plaid";
   import type { Account } from "$lib/types/account";
+  import type { PlaidConnection } from "$lib/types/plaid";
   import { Button } from "$lib/components/ui/button";
   import AccountDialog from "$lib/components/AccountDialog.svelte";
   import CsvImportDialog from "$lib/components/CsvImportDialog.svelte";
@@ -14,6 +16,8 @@
   let importingAccount = $state<Account | undefined>(undefined);
   let ofxDialogOpen = $state(false);
   let ofxImportingAccount = $state<Account | undefined>(undefined);
+  let plaidConnections = $state<PlaidConnection[]>([]);
+  let plaidError = $state<string | null>(null);
 
   async function loadAccounts() {
     try {
@@ -23,7 +27,40 @@
     }
   }
 
-  onMount(loadAccounts);
+  async function loadConnections() {
+    try {
+      plaidConnections = await listPlaidConnections();
+    } catch {
+      // Silently empty when running without Tauri (pnpm dev)
+    }
+  }
+
+  async function disconnect(id: string) {
+    plaidError = null;
+    try {
+      await deletePlaidConnection(id);
+      await loadConnections();
+    } catch (e) {
+      plaidError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  function accountCount(accountIds: string): number {
+    try {
+      return (JSON.parse(accountIds) as unknown[]).length;
+    } catch {
+      return 0;
+    }
+  }
+
+  function formatDate(iso: string): string {
+    return new Date(iso).toLocaleDateString();
+  }
+
+  onMount(() => {
+    loadAccounts();
+    loadConnections();
+  });
 
   function openCreate() {
     editingAccount = undefined;
@@ -102,6 +139,47 @@
       </table>
     </div>
   {/if}
+
+  <div class="connected-banks">
+    <h2>Connected banks</h2>
+    {#if plaidError}
+      <p class="plaid-error">{plaidError}</p>
+    {/if}
+    {#if plaidConnections.length === 0}
+      <div class="connections-empty">
+        <p>No connected banks. Connections will appear here after linking a bank.</p>
+      </div>
+    {:else}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Institution</th>
+              <th>Accounts</th>
+              <th>Connected</th>
+              <th>Sync status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {#each plaidConnections as conn (conn.id)}
+              <tr>
+                <td class="name">{conn.institution_name}</td>
+                <td>{accountCount(conn.account_ids)}</td>
+                <td>{formatDate(conn.connected_at)}</td>
+                <td class="sync-status">{conn.last_synced_at ? "Synced" : "Never synced"}</td>
+                <td class="actions">
+                  <button class="edit-btn disconnect" onclick={() => disconnect(conn.id)}>
+                    Disconnect
+                  </button>
+                </td>
+              </tr>
+            {/each}
+          </tbody>
+        </table>
+      </div>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -193,5 +271,43 @@
 
   .edit-btn:hover {
     color: var(--accent);
+  }
+
+  .disconnect:hover {
+    color: var(--destructive, #e05252);
+  }
+
+  .connected-banks {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px 0;
+  }
+
+  .connected-banks h2 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text);
+    letter-spacing: 0.04em;
+  }
+
+  .connections-empty {
+    padding: 24px 0;
+    text-align: center;
+  }
+
+  .connections-empty p {
+    color: var(--faint);
+    font-size: 13px;
+  }
+
+  .plaid-error {
+    font-size: 12px;
+    color: var(--destructive, #e05252);
+    margin: 0 0 8px;
+  }
+
+  .sync-status {
+    color: var(--muted-foreground);
+    font-size: 11px;
   }
 </style>

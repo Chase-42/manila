@@ -5,6 +5,7 @@ pub mod goals;
 pub mod groups;
 pub mod import;
 pub mod ledger;
+pub mod plaid;
 pub mod reports;
 pub mod search;
 pub mod transactions;

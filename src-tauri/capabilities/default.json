@@ -8,6 +8,7 @@
     "opener:default",
     "wdio:default",
     "wdio-webdriver:default",
+    "deep-link:default",
     "dialog:default",
     "fs:allow-read-text-file",
     "fs:scope-home-recursive"

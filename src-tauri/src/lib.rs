@@ -8,6 +8,7 @@ mod storage;
 pub(crate) mod types;
 
 use crypto::{OnboardingState, UnlockedVault, VaultState};
+use tauri::Emitter;
 
 // Tauri's Builder::run() returns Result but the entry point has nowhere to propagate it.
 #[allow(clippy::expect_used)]
@@ -21,11 +22,28 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
         .manage(VaultState(std::sync::Mutex::new(None::<UnlockedVault>)))
         .manage(OnboardingState(std::sync::Mutex::new(None)))
+        .setup(|app| {
+            #[cfg(desktop)]
+            {
+                use tauri_plugin_deep_link::DeepLinkExt;
+                let handle = app.handle().clone();
+                app.deep_link().on_open_url(move |event| {
+                    for url in event.urls() {
+                        let url_str = url.to_string();
+                        handle
+                            .emit("plaid-oauth-redirect", serde_json::json!({ "url": url_str }))
+                            .ok();
+                    }
+                });
+            }
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::ledger::init_db,
             commands::ledger::create_transfer,

@@ -8,6 +8,7 @@
   import AccountDialog from "$lib/components/AccountDialog.svelte";
   import CsvImportDialog from "$lib/components/CsvImportDialog.svelte";
   import OfxImportDialog from "$lib/components/OfxImportDialog.svelte";
+  import PlaidLinkDialog from "$lib/components/PlaidLinkDialog.svelte";
 
   let accounts = $state<Account[]>([]);
   let dialogOpen = $state(false);
@@ -18,6 +19,7 @@
   let ofxImportingAccount = $state<Account | undefined>(undefined);
   let plaidConnections = $state<PlaidConnection[]>([]);
   let plaidError = $state<string | null>(null);
+  let plaidLinkOpen = $state(false);
 
   async function loadAccounts() {
     try {
@@ -89,6 +91,8 @@
   onsaved={loadAccounts}
 />
 
+<PlaidLinkDialog bind:open={plaidLinkOpen} onsuccess={loadConnections} />
+
 {#if importingAccount}
   <CsvImportDialog account={importingAccount} bind:open={importDialogOpen} />
 {/if}
@@ -100,7 +104,10 @@
 <div class="page">
   <header class="page-header">
     <h1>Accounts</h1>
-    <Button onclick={openCreate}>New account</Button>
+    <div class="header-actions">
+      <Button variant="ghost" onclick={() => (plaidLinkOpen = true)}>Connect a bank</Button>
+      <Button onclick={openCreate}>New account</Button>
+    </div>
   </header>
 
   {#if accounts.length === 0}
@@ -196,6 +203,11 @@
     padding: 16px 24px;
     background: var(--surface-raised);
     border-bottom: 1px solid var(--border);
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
   }
 
   h1 {

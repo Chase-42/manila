@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { PlaidConnection } from "./types/plaid";
+import type { PlaidConnection, SyncResult } from "./types/plaid";
 
 export async function listPlaidConnections(): Promise<PlaidConnection[]> {
   try {
@@ -33,6 +33,20 @@ export async function upsertPlaidConnection(params: {
 export async function deletePlaidConnection(id: string): Promise<void> {
   try {
     await invoke<void>("delete_plaid_connection", { id });
+  } catch (e) {
+    throw new Error(e instanceof Error ? e.message : String(e));
+  }
+}
+
+export async function syncPlaidConnection(
+  connectionId: string,
+  proxyUrl: string,
+): Promise<SyncResult> {
+  try {
+    return await invoke<SyncResult>("sync_plaid_connection", {
+      connectionId,
+      proxyUrl,
+    });
   } catch (e) {
     throw new Error(e instanceof Error ? e.message : String(e));
   }

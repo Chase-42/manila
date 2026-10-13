@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { listAccounts } from "$lib/accounts";
-  import { listPlaidConnections, deletePlaidConnection } from "$lib/plaid";
+  import { listPlaidConnections, deletePlaidConnection, syncPlaidConnection } from "$lib/plaid";
   import type { Account } from "$lib/types/account";
   import type { PlaidConnection } from "$lib/types/plaid";
   import { Button } from "$lib/components/ui/button";
@@ -20,6 +20,8 @@
   let plaidConnections = $state<PlaidConnection[]>([]);
   let plaidError = $state<string | null>(null);
   let plaidLinkOpen = $state(false);
+  let syncingId = $state<string | null>(null);
+  let syncErrors = $state<Record<string, string>>({});
 
   async function loadAccounts() {
     try {
@@ -59,6 +61,10 @@
     return new Date(iso).toLocaleDateString();
   }
 
+  function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+  }
+
   onMount(() => {
     loadAccounts();
     loadConnections();
@@ -82,6 +88,23 @@
   function openOfxImport(account: Account) {
     ofxImportingAccount = account;
     ofxDialogOpen = true;
+  }
+
+  async function syncConnection(conn: PlaidConnection) {
+    const proxyUrl = localStorage.getItem("manila.plaidProxyUrl") ?? "";
+    if (!proxyUrl) {
+      syncErrors = { ...syncErrors, [conn.id]: "No proxy URL saved — connect a bank first." };
+      return;
+    }
+    syncingId = conn.id;
+    syncErrors = { ...syncErrors, [conn.id]: "" };
+    try {
+      await syncPlaidConnection(conn.id, proxyUrl);
+      await loadConnections();
+    } catch (e) {
+      syncErrors = { ...syncErrors, [conn.id]: errorMessage(e) };
+    }
+    syncingId = null;
   }
 </script>
 
@@ -176,11 +199,23 @@
                 <td>{formatDate(conn.connected_at)}</td>
                 <td class="sync-status">{conn.last_synced_at ? "Synced" : "Never synced"}</td>
                 <td class="actions">
+                  <button
+                    class="edit-btn"
+                    disabled={syncingId === conn.id}
+                    onclick={() => syncConnection(conn)}
+                  >
+                    {syncingId === conn.id ? "Syncing…" : "Sync"}
+                  </button>
                   <button class="edit-btn disconnect" onclick={() => disconnect(conn.id)}>
                     Disconnect
                   </button>
                 </td>
               </tr>
+              {#if syncErrors[conn.id]}
+                <tr class="sync-error-row">
+                  <td colspan="5" class="sync-error">{syncErrors[conn.id]}</td>
+                </tr>
+              {/if}
             {/each}
           </tbody>
         </table>
@@ -321,5 +356,16 @@
   .sync-status {
     color: var(--muted-foreground);
     font-size: 11px;
+  }
+
+  .sync-error-row td {
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .sync-error {
+    font-size: 11px;
+    color: var(--destructive, #e05252);
+    padding: 4px 12px 8px;
+    font-family: var(--font-mono);
   }
 </style>

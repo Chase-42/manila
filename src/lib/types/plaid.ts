@@ -7,3 +7,10 @@ export interface PlaidConnection {
   connected_at: string;
   last_synced_at: string | null;
 }
+
+export interface SyncResult {
+  imported_count: number;
+  accounts_created: number;
+  skipped_count: number;
+  errors: string[];
+}

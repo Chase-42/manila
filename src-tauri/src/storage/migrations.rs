@@ -16,6 +16,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     (11, MIGRATION_011),
     // 12 and 13 created vault_config; that table is now vault.json on disk
     (15, MIGRATION_015),
+    (16, MIGRATION_016),
 ];
 
 const MIGRATION_001: &str = "
@@ -215,6 +216,12 @@ const MIGRATION_015: &str = "
         connected_at     TEXT NOT NULL,
         last_synced_at   TEXT
     );
+";
+
+const MIGRATION_016: &str = "
+    ALTER TABLE accounts ADD COLUMN plaid_account_id TEXT;
+    CREATE UNIQUE INDEX idx_accounts_plaid_account_id
+        ON accounts(plaid_account_id) WHERE plaid_account_id IS NOT NULL;
 ";
 
 const MIGRATION_009: &str = "
@@ -609,6 +616,54 @@ mod tests {
                 > 0;
             assert!(col_exists, "plaid_connections.{col} should exist after migration 15");
         }
+    }
+
+    #[test]
+    fn migration_016_adds_plaid_account_id_to_accounts() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        let col_exists: bool = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('accounts') WHERE name='plaid_account_id'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap()
+            > 0;
+        assert!(col_exists, "accounts.plaid_account_id should exist after migration 16");
+
+        // Can insert an account without plaid_account_id.
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        // Can insert an account with plaid_account_id.
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at, plaid_account_id)
+             VALUES ('acc-2', 'Savings', 'depository', 'savings', 'Test', 'USD', datetime('now'), 'plaid-acct-abc')",
+            [],
+        )
+        .unwrap();
+
+        // Duplicate plaid_account_id must fail (partial unique index).
+        let dup = conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at, plaid_account_id)
+             VALUES ('acc-3', 'Savings2', 'depository', 'savings', 'Test', 'USD', datetime('now'), 'plaid-acct-abc')",
+            [],
+        );
+        assert!(dup.is_err(), "duplicate plaid_account_id must violate unique index");
+
+        // Two accounts with NULL plaid_account_id are allowed (partial index excludes NULLs).
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-4', 'Other', 'credit', 'credit card', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
     }
 
     #[test]

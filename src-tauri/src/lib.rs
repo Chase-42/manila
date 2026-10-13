@@ -85,6 +85,7 @@ pub fn run() {
             commands::plaid::list_plaid_connections,
             commands::plaid::upsert_plaid_connection,
             commands::plaid::delete_plaid_connection,
+            commands::plaid_sync::sync_plaid_connection,
             commands::vault::create_vault,
             commands::vault::vault_status,
             commands::vault::unlock_vault,

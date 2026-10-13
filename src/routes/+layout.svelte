@@ -7,11 +7,33 @@
   import type { Component } from 'svelte';
   import LockScreen from "$lib/components/LockScreen.svelte";
   import { lockVault, vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
+  import { listPlaidConnections, syncPlaidConnection } from "$lib/plaid";
 
   let { children } = $props();
 
   let dbError = $state<string | null>(null);
   let dbReady = $state(false);
+  let prevUnlocked = $state(false);
+
+  async function triggerBackgroundSync() {
+    const proxyUrl = localStorage.getItem("manila.plaidProxyUrl") ?? "";
+    if (!proxyUrl) return;
+    const connections = await listPlaidConnections().catch(() => []);
+    for (const conn of connections) {
+      syncPlaidConnection(conn.id, proxyUrl).catch(() => {});
+    }
+  }
+
+  $effect(() => {
+    if (!$vaultStatus) return;
+    if (!$vaultStatus.unlocked) {
+      prevUnlocked = false;
+      return;
+    }
+    if (prevUnlocked) return;
+    prevUnlocked = true;
+    void triggerBackgroundSync();
+  });
 
   onMount(async () => {
     // wdio/tauri-plugin must be registered in the WebView for E2E tests; DEV guard keeps it out of prod

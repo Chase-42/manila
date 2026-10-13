@@ -236,7 +236,7 @@ fn apply_categorization_rules_inner(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn commit_records(
+pub(crate) fn commit_records(
     conn: &mut Connection,
     key: &[u8; 32],
     source_type: &str,

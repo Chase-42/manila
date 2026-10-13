@@ -6,6 +6,7 @@ pub mod groups;
 pub mod import;
 pub mod ledger;
 pub mod plaid;
+pub mod plaid_sync;
 pub mod reports;
 pub mod search;
 pub mod transactions;

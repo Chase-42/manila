@@ -21,6 +21,7 @@
   let plaidError = $state<string | null>(null);
   let plaidLinkOpen = $state(false);
   let syncingId = $state<string | null>(null);
+  let disconnectingId = $state<string | null>(null);
   let syncErrors = $state<Record<string, string>>({});
 
   async function loadAccounts() {
@@ -40,6 +41,8 @@
   }
 
   async function disconnect(id: string) {
+    if (disconnectingId) return;
+    disconnectingId = id;
     plaidError = null;
     try {
       await deletePlaidConnection(id);
@@ -47,6 +50,7 @@
     } catch (e) {
       plaidError = e instanceof Error ? e.message : String(e);
     }
+    disconnectingId = null;
   }
 
   function accountCount(accountIds: string): number {
@@ -93,7 +97,7 @@
   async function syncConnection(conn: PlaidConnection) {
     const proxyUrl = localStorage.getItem("manila.plaidProxyUrl") ?? "";
     if (!proxyUrl) {
-      syncErrors = { ...syncErrors, [conn.id]: "No proxy URL saved — connect a bank first." };
+      syncErrors = { ...syncErrors, [conn.id]: "No proxy URL saved: connect a bank first." };
       return;
     }
     syncingId = conn.id;
@@ -204,10 +208,14 @@
                     disabled={syncingId === conn.id}
                     onclick={() => syncConnection(conn)}
                   >
-                    {syncingId === conn.id ? "Syncing…" : "Sync"}
+                    {syncingId === conn.id ? "Syncing..." : "Sync"}
                   </button>
-                  <button class="edit-btn disconnect" onclick={() => disconnect(conn.id)}>
-                    Disconnect
+                  <button
+                    class="edit-btn disconnect"
+                    disabled={disconnectingId === conn.id}
+                    onclick={() => disconnect(conn.id)}
+                  >
+                    {disconnectingId === conn.id ? "Disconnecting..." : "Disconnect"}
                   </button>
                 </td>
               </tr>

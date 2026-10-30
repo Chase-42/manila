@@ -8,8 +8,6 @@ use crate::crypto::field::open_field;
 use crate::import::dedup::{self, Candidate};
 use crate::types::Cents;
 
-// ── Plaid API response shapes ──────────────────────────────────────────────
-
 #[derive(Debug, Deserialize)]
 pub struct PlaidBalances {
     pub iso_currency_code: Option<String>,
@@ -43,7 +41,6 @@ pub struct PlaidSyncPage {
     pub has_more: bool,
 }
 
-// ── Command result ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
 pub struct SyncResult {
@@ -53,7 +50,6 @@ pub struct SyncResult {
     pub errors: Vec<String>,
 }
 
-// ── Pure helpers (public for unit tests) ──────────────────────────────────
 
 pub(crate) fn map_plaid_type(plaid_type: &str) -> &'static str {
     match plaid_type {
@@ -74,7 +70,6 @@ pub(crate) fn plaid_description(t: &PlaidTransactionObject) -> String {
     }
 }
 
-// ── Core sync logic (no HTTP, testable with mock pages) ───────────────────
 
 pub(crate) fn sync_plaid_connection_inner(
     conn: &mut Connection,
@@ -199,7 +194,6 @@ pub(crate) fn sync_plaid_connection_inner(
     })
 }
 
-// ── Tauri command ──────────────────────────────────────────────────────────
 
 #[tauri::command]
 pub async fn sync_plaid_connection(
@@ -296,7 +290,6 @@ pub async fn sync_plaid_connection(
     Ok(result)
 }
 
-// ── Tests ──────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
@@ -357,7 +350,6 @@ mod tests {
         }
     }
 
-    // ── plaid_amount_to_cents ──────────────────────────────────────────────
 
     #[test]
     fn amount_positive_is_outflow() {
@@ -380,7 +372,6 @@ mod tests {
         assert_eq!(plaid_amount_to_cents(12.005), Cents(-1201));
     }
 
-    // ── map_plaid_type ────────────────────────────────────────────────────
 
     #[test]
     fn type_depository() {
@@ -417,7 +408,6 @@ mod tests {
         assert_eq!(map_plaid_type("xyz"), "depository");
     }
 
-    // ── plaid_description ─────────────────────────────────────────────────
 
     #[test]
     fn description_uses_merchant_name_when_present() {
@@ -458,7 +448,6 @@ mod tests {
         assert_eq!(plaid_description(&txn), "COFFEE SHOP #12");
     }
 
-    // ── sync_plaid_connection_inner ───────────────────────────────────────
 
     #[test]
     fn new_account_and_transactions_are_created() {

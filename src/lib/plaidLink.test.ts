@@ -3,7 +3,7 @@ import { extractConnectionParams } from "./plaidLink";
 import type { PlaidSuccessMetadata } from "./plaidLink";
 
 describe("extractConnectionParams", () => {
-  it("maps all fields from metadata and exchange response", () => {
+  it("maps access token and item ID from exchange response", () => {
     const metadata: PlaidSuccessMetadata = {
       institution: { institution_id: "ins_123", name: "First National Bank" },
       accounts: [
@@ -13,13 +13,13 @@ describe("extractConnectionParams", () => {
     };
 
     const result = extractConnectionParams(
-      "public-token-abc",
+      "access-sandbox-abc",
       "item-id-xyz",
       metadata,
     );
 
     expect(result.plaid_item_id).toBe("item-id-xyz");
-    expect(result.access_token).toBe("public-token-abc");
+    expect(result.access_token).toBe("access-sandbox-abc");
     expect(result.institution_name).toBe("First National Bank");
     expect(result.institution_id).toBe("ins_123");
     expect(result.account_ids).toBe('["acc_a","acc_b"]');

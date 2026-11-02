@@ -1,15 +1,20 @@
+mod auth;
+mod db;
 mod handlers;
 mod plaid;
+mod sync_handlers;
 
-use axum::{Router, routing::{get, post}};
+use axum::{Router, extract::DefaultBodyLimit, routing::{get, post}};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use db::Db;
 use plaid::PlaidClient;
 
 #[derive(Clone)]
 pub struct AppState {
     pub plaid: Arc<PlaidClient>,
+    pub db: Db,
 }
 
 #[tokio::main]
@@ -25,16 +30,35 @@ async fn main() {
         .unwrap_or_else(|_| "3000".into())
         .parse()
         .unwrap_or(3000);
+    let db_path = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "./data/manila-sync.db".into());
+
+    if let Some(dir) = std::path::Path::new(&db_path).parent() {
+        if !dir.as_os_str().is_empty() {
+            std::fs::create_dir_all(dir).unwrap_or_else(|e| {
+                eprintln!("error: could not create data directory {}: {e}", dir.display());
+                std::process::exit(1);
+            });
+        }
+    }
+
+    let db = Db::open(&db_path).unwrap_or_else(|e| {
+        eprintln!("error: could not open database at {db_path}: {e}");
+        std::process::exit(1);
+    });
 
     let plaid = Arc::new(PlaidClient::new(client_id, secret, &plaid_env));
 
-    let state = AppState { plaid };
+    let state = AppState { plaid, db };
 
     let app = Router::new()
         .route("/health", get(handlers::health))
         .route("/plaid/link-token", post(handlers::link_token))
         .route("/plaid/exchange", post(handlers::exchange))
         .route("/plaid/transactions", post(handlers::transactions))
+        .route("/sync/enroll", post(sync_handlers::enroll).layer(DefaultBodyLimit::max(4 * 1024)))
+        .route("/sync/push", post(sync_handlers::push).layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
+        .route("/sync/pull", get(sync_handlers::pull))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

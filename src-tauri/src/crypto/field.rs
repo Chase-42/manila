@@ -46,6 +46,35 @@ pub fn open_field(key: &[u8; 32], sealed: &str) -> Result<String, CryptoError> {
     String::from_utf8(plaintext_bytes).map_err(|_| CryptoError::DecryptionFailed)
 }
 
+// Encrypts arbitrary bytes; layout is identical to seal_field: [24-byte nonce | ciphertext].
+// No v1: prefix and no base64 — callers encode the result themselves.
+#[allow(clippy::expect_used)]
+pub fn seal_bytes(key: &[u8; 32], plaintext: &[u8]) -> Vec<u8> {
+    let cipher = XChaCha20Poly1305::new(key.into());
+    let mut nonce_bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = XNonce::from(nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(&nonce, plaintext)
+        .expect("XChaCha20Poly1305 encrypt never fails with a valid key and nonce");
+    let mut blob = Vec::with_capacity(24 + ciphertext.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+    blob
+}
+
+pub fn open_bytes(key: &[u8; 32], blob: &[u8]) -> Result<Vec<u8>, CryptoError> {
+    if blob.len() < 24 {
+        return Err(CryptoError::InvalidBlobLength);
+    }
+    let (nonce_bytes, ciphertext) = blob.split_at(24);
+    let nonce = XNonce::from_slice(nonce_bytes);
+    let cipher = XChaCha20Poly1305::new(key.into());
+    cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| CryptoError::DecryptionFailed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -98,6 +127,40 @@ mod tests {
         let sealed = seal_field(&key, "");
         let recovered = open_field(&key, &sealed).unwrap();
         assert_eq!(recovered, "");
+    }
+
+    #[test]
+    fn seal_bytes_round_trip() {
+        let key = [0xabu8; 32];
+        let plaintext = b"hello sync world";
+        let blob = seal_bytes(&key, plaintext);
+        let recovered = open_bytes(&key, &blob).unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn seal_bytes_empty_round_trips() {
+        let key = [0x01u8; 32];
+        let blob = seal_bytes(&key, b"");
+        let recovered = open_bytes(&key, &blob).unwrap();
+        assert_eq!(recovered, b"");
+    }
+
+    #[test]
+    fn open_bytes_tampered_returns_decryption_failed() {
+        let key = [0x33u8; 32];
+        let mut blob = seal_bytes(&key, b"sensitive data");
+        blob[30] ^= 0xff;
+        let result = open_bytes(&key, &blob);
+        assert!(matches!(result, Err(CryptoError::DecryptionFailed)));
+    }
+
+    #[test]
+    fn open_bytes_too_short_returns_invalid_blob_length() {
+        let key = [0x44u8; 32];
+        let short = vec![0u8; 23];
+        let result = open_bytes(&key, &short);
+        assert!(matches!(result, Err(CryptoError::InvalidBlobLength)));
     }
 
     #[test]

@@ -17,6 +17,7 @@ const MIGRATIONS: &[(i64, &str)] = &[
     // 12 and 13 created vault_config; that table is now vault.json on disk
     (15, MIGRATION_015),
     (16, MIGRATION_016),
+    (17, MIGRATION_017),
 ];
 
 const MIGRATION_001: &str = "
@@ -238,6 +239,434 @@ const MIGRATION_009: &str = "
     WHERE NOT EXISTS (
         SELECT 1 FROM raw_records rr2 WHERE rr2.supersedes_id = rr.id
     );
+";
+
+const MIGRATION_017: &str = "
+    CREATE TABLE sync_state (
+        key   TEXT NOT NULL PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
+    CREATE TABLE sync_pending_changes (
+        id         INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+        table_name TEXT    NOT NULL,
+        row_id     TEXT    NOT NULL,
+        operation  TEXT    NOT NULL CHECK(operation IN ('upsert', 'delete')),
+        created_at TEXT    NOT NULL
+    );
+
+    CREATE TABLE sync_vector_clock (
+        table_name TEXT    NOT NULL PRIMARY KEY,
+        local_seq  INTEGER NOT NULL DEFAULT 0
+    );
+
+    INSERT INTO sync_vector_clock (table_name, local_seq) VALUES
+        ('accounts', 0), ('transactions', 0), ('raw_records', 0),
+        ('import_batches', 0), ('postings', 0), ('transaction_meta', 0),
+        ('splits', 0), ('categories', 0), ('category_groups', 0),
+        ('income_categories', 0), ('allocation_events', 0), ('month_closes', 0),
+        ('goals', 0), ('valuation_snapshots', 0), ('categorization_rules', 0),
+        ('plaid_connections', 0);
+
+    CREATE TRIGGER sync_capture_accounts_insert AFTER INSERT ON accounts BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'accounts', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'accounts'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_accounts_update AFTER UPDATE ON accounts BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'accounts', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'accounts'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_accounts_delete AFTER DELETE ON accounts BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'accounts', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'accounts'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_transactions_insert AFTER INSERT ON transactions BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transactions', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transactions'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_transactions_update AFTER UPDATE ON transactions BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transactions', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transactions'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_transactions_delete AFTER DELETE ON transactions BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transactions', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transactions'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_raw_records_insert AFTER INSERT ON raw_records BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'raw_records', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'raw_records'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_raw_records_update AFTER UPDATE ON raw_records BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'raw_records', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'raw_records'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_raw_records_delete AFTER DELETE ON raw_records BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'raw_records', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'raw_records'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_import_batches_insert AFTER INSERT ON import_batches BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'import_batches', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'import_batches'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_import_batches_update AFTER UPDATE ON import_batches BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'import_batches', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'import_batches'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_import_batches_delete AFTER DELETE ON import_batches BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'import_batches', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'import_batches'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_postings_insert AFTER INSERT ON postings BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'postings', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'postings'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_postings_update AFTER UPDATE ON postings BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'postings', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'postings'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_postings_delete AFTER DELETE ON postings BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'postings', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'postings'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_transaction_meta_insert AFTER INSERT ON transaction_meta BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transaction_meta', NEW.transaction_id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transaction_meta'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_transaction_meta_update AFTER UPDATE ON transaction_meta BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transaction_meta', NEW.transaction_id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transaction_meta'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_transaction_meta_delete AFTER DELETE ON transaction_meta BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'transaction_meta', OLD.transaction_id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'transaction_meta'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_splits_insert AFTER INSERT ON splits BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'splits', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'splits'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_splits_update AFTER UPDATE ON splits BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'splits', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'splits'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_splits_delete AFTER DELETE ON splits BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'splits', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'splits'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_categories_insert AFTER INSERT ON categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categories', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_categories_update AFTER UPDATE ON categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categories', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_categories_delete AFTER DELETE ON categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categories', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_category_groups_insert AFTER INSERT ON category_groups BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'category_groups', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'category_groups'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_category_groups_update AFTER UPDATE ON category_groups BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'category_groups', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'category_groups'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_category_groups_delete AFTER DELETE ON category_groups BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'category_groups', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'category_groups'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_income_categories_insert AFTER INSERT ON income_categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'income_categories', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'income_categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_income_categories_update AFTER UPDATE ON income_categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'income_categories', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'income_categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_income_categories_delete AFTER DELETE ON income_categories BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'income_categories', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'income_categories'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_allocation_events_insert AFTER INSERT ON allocation_events BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'allocation_events', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'allocation_events'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_allocation_events_update AFTER UPDATE ON allocation_events BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'allocation_events', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'allocation_events'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_allocation_events_delete AFTER DELETE ON allocation_events BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'allocation_events', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'allocation_events'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_month_closes_insert AFTER INSERT ON month_closes BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'month_closes', NEW.month, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'month_closes'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_month_closes_update AFTER UPDATE ON month_closes BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'month_closes', NEW.month, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'month_closes'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_month_closes_delete AFTER DELETE ON month_closes BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'month_closes', OLD.month, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'month_closes'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_goals_insert AFTER INSERT ON goals BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'goals', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'goals'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_goals_update AFTER UPDATE ON goals BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'goals', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'goals'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_goals_delete AFTER DELETE ON goals BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'goals', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'goals'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_valuation_snapshots_insert AFTER INSERT ON valuation_snapshots BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'valuation_snapshots', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'valuation_snapshots'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_valuation_snapshots_update AFTER UPDATE ON valuation_snapshots BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'valuation_snapshots', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'valuation_snapshots'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_valuation_snapshots_delete AFTER DELETE ON valuation_snapshots BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'valuation_snapshots', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'valuation_snapshots'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_categorization_rules_insert AFTER INSERT ON categorization_rules BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categorization_rules', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categorization_rules'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_categorization_rules_update AFTER UPDATE ON categorization_rules BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categorization_rules', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categorization_rules'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_categorization_rules_delete AFTER DELETE ON categorization_rules BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'categorization_rules', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'categorization_rules'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+
+    CREATE TRIGGER sync_capture_plaid_connections_insert AFTER INSERT ON plaid_connections BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'plaid_connections', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'plaid_connections'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_plaid_connections_update AFTER UPDATE ON plaid_connections BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'plaid_connections', NEW.id, 'upsert', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'plaid_connections'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
+    CREATE TRIGGER sync_capture_plaid_connections_delete AFTER DELETE ON plaid_connections BEGIN
+      INSERT INTO sync_pending_changes (table_name, row_id, operation, created_at)
+      SELECT 'plaid_connections', OLD.id, 'delete', datetime('now')
+      WHERE (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+      UPDATE sync_vector_clock SET local_seq = local_seq + 1
+      WHERE table_name = 'plaid_connections'
+        AND (SELECT flag FROM _sync_skip LIMIT 1) = 0;
+    END;
 ";
 
 pub fn run_migrations(conn: &mut Connection) -> Result<()> {
@@ -664,6 +1093,192 @@ mod tests {
             [],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn migration_017_creates_sync_tables_and_clock() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        for table in &["sync_state", "sync_pending_changes", "sync_vector_clock"] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1",
+                    [table],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap()
+                > 0;
+            assert!(exists, "table {table} should exist after migration 17");
+        }
+
+        let clock_rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_vector_clock", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(clock_rows, 16, "sync_vector_clock should have 16 rows");
+    }
+
+    #[test]
+    fn migration_017_insert_trigger_fires() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_pending_changes WHERE table_name='accounts' AND operation='upsert'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 1);
+
+        let clock: i64 = conn
+            .query_row(
+                "SELECT local_seq FROM sync_vector_clock WHERE table_name='accounts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(clock, 1);
+    }
+
+    #[test]
+    fn migration_017_update_and_insert_produce_two_rows_clock_two() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE accounts SET name = 'Updated' WHERE id = 'acc-1'",
+            [],
+        )
+        .unwrap();
+
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_pending_changes WHERE table_name='accounts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 2);
+
+        let clock: i64 = conn
+            .query_row(
+                "SELECT local_seq FROM sync_vector_clock WHERE table_name='accounts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(clock, 2);
+    }
+
+    #[test]
+    fn migration_017_delete_trigger_fires() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute("DELETE FROM accounts WHERE id = 'acc-1'", []).unwrap();
+
+        let pending: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_pending_changes WHERE operation='delete' AND table_name='accounts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(pending, 1);
+    }
+
+    #[test]
+    fn migration_017_skip_flag_suppresses_trigger() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute("UPDATE _sync_skip SET flag = 1", []).unwrap();
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute("UPDATE _sync_skip SET flag = 0", []).unwrap();
+
+        let pending: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_pending_changes", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(pending, 0);
+
+        let clock: i64 = conn
+            .query_row(
+                "SELECT local_seq FROM sync_vector_clock WHERE table_name='accounts'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(clock, 0);
+    }
+
+    #[test]
+    fn migration_017_transaction_meta_uses_transaction_id_as_row_id() {
+        let mut conn = open_connection(":memory:", None).unwrap();
+        run_migrations(&mut conn).unwrap();
+
+        conn.execute(
+            "INSERT INTO accounts (id, name, type, subtype, institution, currency, created_at)
+             VALUES ('acc-1', 'Checking', 'depository', 'checking', 'Test', 'USD', datetime('now'))",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO transactions (id, account_id, created_at)
+             VALUES ('txn-1', 'acc-1', datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let pending_before: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_pending_changes", [], |r| r.get(0))
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO transaction_meta (transaction_id, notes, tags, reviewed, updated_at)
+             VALUES ('txn-1', 'test note', '[]', 0, datetime('now'))",
+            [],
+        )
+        .unwrap();
+
+        let row_id: String = conn
+            .query_row(
+                "SELECT row_id FROM sync_pending_changes WHERE table_name='transaction_meta' ORDER BY id DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(row_id, "txn-1");
+
+        let total: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sync_pending_changes", [], |r| r.get(0))
+            .unwrap();
+        assert!(total > pending_before);
     }
 
     #[test]

@@ -3,11 +3,12 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { page } from "$app/stores";
-  import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, Target, BarChart2 } from '@lucide/svelte';
+  import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, Target, BarChart2, Settings } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import LockScreen from "$lib/components/LockScreen.svelte";
   import { lockVault, vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
   import { listPlaidConnections, syncPlaidConnection } from "$lib/plaid";
+  import { getSyncConfig, runSync } from "$lib/sync";
 
   let { children } = $props();
 
@@ -15,13 +16,18 @@
   let dbReady = $state(false);
   let prevUnlocked = $state(false);
 
-  async function triggerBackgroundSync() {
-    const proxyUrl = localStorage.getItem("manila.plaidProxyUrl") ?? "";
-    if (!proxyUrl) return;
+  async function syncPlaidConnections(proxyUrl: string) {
     const connections = await listPlaidConnections().catch(() => []);
     for (const conn of connections) {
       syncPlaidConnection(conn.id, proxyUrl).catch(() => {});
     }
+  }
+
+  async function triggerBackgroundSync() {
+    const proxyUrl = localStorage.getItem("manila.plaidProxyUrl");
+    if (proxyUrl) await syncPlaidConnections(proxyUrl);
+    const cfg = await getSyncConfig().catch(() => null);
+    if (cfg?.server_url) runSync().catch(() => {});
   }
 
   $effect(() => {
@@ -88,6 +94,7 @@
     { href: "/categories", label: "Categories", Icon: Tag },
     { href: "/goals", label: "Goals", Icon: Target },
     { href: "/reports", label: "Reports", Icon: BarChart2 },
+    { href: "/settings", label: "Settings", Icon: Settings },
   ];
 </script>
 

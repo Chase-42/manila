@@ -10,7 +10,12 @@ pub fn open_connection(path: &str, key: Option<&[u8; 32]>) -> Result<Connection>
         let hex: String = k.iter().map(|b| format!("{b:02x}")).collect();
         conn.execute_batch(&format!("PRAGMA key = \"x'{hex}'\";"))?;
     }
-    conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+    conn.execute_batch(
+        "PRAGMA foreign_keys = ON;
+         PRAGMA journal_mode=WAL;
+         CREATE TABLE IF NOT EXISTS _sync_skip (flag INTEGER NOT NULL DEFAULT 0);
+         INSERT OR REPLACE INTO _sync_skip (rowid, flag) VALUES (1, 0);",
+    )?;
     bootstrap_migrations_table(&conn)?;
     Ok(conn)
 }

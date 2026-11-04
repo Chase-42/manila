@@ -5,6 +5,7 @@ mod crypto;
 mod import;
 mod ledger;
 mod storage;
+mod sync;
 pub(crate) mod types;
 
 use crypto::{OnboardingState, UnlockedVault, VaultState};
@@ -93,6 +94,11 @@ pub fn run() {
             commands::vault::generate_recovery_phrase,
             commands::vault::acknowledge_recovery_phrase,
             commands::vault::restore_from_phrase,
+            commands::sync::configure_sync,
+            commands::sync::get_sync_config,
+            commands::sync::enroll_sync,
+            commands::sync::run_sync,
+            commands::sync::get_sync_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

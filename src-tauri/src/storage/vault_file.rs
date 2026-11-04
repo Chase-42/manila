@@ -8,6 +8,10 @@ pub struct VaultFileConfig {
     pub encrypted_vault_secret: String,
     pub phrase_verifier: Option<String>,
     pub created_at: String,
+    #[serde(default)]
+    pub server_url: Option<String>,
+    #[serde(default)]
+    pub sync_device_id: Option<String>,
 }
 
 impl VaultFileConfig {
@@ -22,6 +26,8 @@ impl VaultFileConfig {
             encrypted_vault_secret: B64.encode(encrypted_vault_secret),
             phrase_verifier: phrase_verifier.map(|v| B64.encode(v)),
             created_at: created_at.to_string(),
+            server_url: None,
+            sync_device_id: None,
         }
     }
 

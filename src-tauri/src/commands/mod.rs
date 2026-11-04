@@ -9,6 +9,7 @@ pub mod plaid;
 pub mod plaid_sync;
 pub mod reports;
 pub mod search;
+pub mod sync;
 pub mod transactions;
 pub mod vault;
 

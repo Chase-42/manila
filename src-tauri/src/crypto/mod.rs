@@ -22,6 +22,7 @@ pub enum CryptoError {
 // Fields are zeroed on drop via ZeroizeOnDrop.
 #[derive(ZeroizeOnDrop)]
 pub struct VaultKeys {
+    pub vault_secret: [u8; 32],
     pub data_key: [u8; 32],
     pub ingest_secret: [u8; 32],
     pub sync_signing_seed: [u8; 32],

@@ -42,3 +42,11 @@ export async function getSyncStatus(): Promise<SyncLastRun | null> {
     throw e instanceof Error ? e : new Error(String(e));
   }
 }
+
+export async function revokeSync(): Promise<void> {
+  try {
+    await invoke("revoke_sync");
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}

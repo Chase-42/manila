@@ -81,6 +81,7 @@ pub(crate) fn create_vault_inner(
         .map_err(|_| "vault lock poisoned".to_string())?;
     *guard = Some(UnlockedVault {
         keys: VaultKeys {
+            vault_secret,
             data_key: derived.data_key,
             ingest_secret: derived.ingest_secret,
             sync_signing_seed: derived.sync_signing_seed,
@@ -121,6 +122,7 @@ pub(crate) fn unlock_vault_inner(
         .map_err(|_| "vault lock poisoned".to_string())?;
     *guard = Some(UnlockedVault {
         keys: VaultKeys {
+            vault_secret,
             data_key: derived.data_key,
             ingest_secret: derived.ingest_secret,
             sync_signing_seed: derived.sync_signing_seed,
@@ -176,6 +178,7 @@ pub(crate) fn restore_from_phrase_inner(
         .map_err(|_| "vault lock poisoned".to_string())?;
     *guard = Some(UnlockedVault {
         keys: VaultKeys {
+            vault_secret: candidate_secret,
             data_key: derived.data_key,
             ingest_secret: derived.ingest_secret,
             sync_signing_seed: derived.sync_signing_seed,
@@ -276,6 +279,70 @@ pub fn restore_from_phrase(
 ) -> Result<(), String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
     restore_from_phrase_inner(&app_dir, &vault_state.0, &phrase, &new_password)
+}
+
+pub(crate) fn enroll_vault_from_phrase_inner(
+    app_dir: &Path,
+    vault_mutex: &Mutex<Option<UnlockedVault>>,
+    phrase: &str,
+    password: &str,
+) -> Result<(), String> {
+    if read_vault_file(app_dir)
+        .map(|v| v.is_some())
+        .unwrap_or(false)
+    {
+        return Err("vault already initialized".to_string());
+    }
+
+    let vault_secret =
+        decode_phrase(phrase).map_err(|_| "recovery phrase not recognized".to_string())?;
+
+    let mut salt = [0u8; 32];
+    OsRng.fill_bytes(&mut salt);
+    let master_key = derive_master_key(password.as_bytes(), &salt);
+    let blob = encrypt_vault_secret(&master_key, &vault_secret);
+    let verifier = derive_phrase_verifier(&vault_secret);
+    let created_at = Utc::now().to_rfc3339();
+
+    let cfg = VaultFileConfig::new(&salt, &blob, Some(&verifier), &created_at);
+    write_vault_file(app_dir, &cfg)?;
+
+    let derived = derive_keys(&vault_secret);
+    let conn = open_app_db(app_dir, &derived.data_key)?;
+
+    let mut guard = vault_mutex
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    *guard = Some(UnlockedVault {
+        keys: VaultKeys {
+            vault_secret,
+            data_key: derived.data_key,
+            ingest_secret: derived.ingest_secret,
+            sync_signing_seed: derived.sync_signing_seed,
+        },
+        conn,
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub fn enroll_vault_from_phrase(
+    app: tauri::AppHandle,
+    vault_state: State<'_, VaultState>,
+    phrase: String,
+    password: String,
+) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    enroll_vault_from_phrase_inner(&app_dir, &vault_state.0, &phrase, &password)
+}
+
+#[tauri::command]
+pub fn get_enrollment_phrase(vault: State<'_, VaultState>) -> Result<Vec<String>, String> {
+    crate::commands::require_unlocked(&vault)?;
+    let guard = vault.0.lock().map_err(|_| "vault lock poisoned".to_string())?;
+    let unlocked = guard.as_ref().ok_or("locked")?;
+    Ok(encode_phrase(&unlocked.keys.vault_secret))
 }
 
 #[cfg(test)]
@@ -437,5 +504,68 @@ mod tests {
             crate::commands::require_unlocked(&vault).unwrap_err(),
             "locked"
         );
+    }
+
+    #[test]
+    fn enroll_from_phrase_creates_vault_and_unlocks() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+
+        // Create a source vault and get its phrase.
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "source-password").unwrap();
+        let source_secret = {
+            let guard = vault_mutex.lock().unwrap();
+            guard.as_ref().unwrap().keys.vault_secret
+        };
+        let phrase = encode_phrase(&source_secret).join(" ");
+
+        // Enroll a new dir (simulates a new device).
+        let new_dir = tempfile::tempdir().expect("temp dir for new device");
+        let new_vault_mutex = Mutex::new(None);
+        enroll_vault_from_phrase_inner(new_dir.path(), &new_vault_mutex, &phrase, "new-password")
+            .unwrap();
+
+        let guard = new_vault_mutex.lock().unwrap();
+        let unlocked = guard.as_ref().expect("should be unlocked after enroll");
+        assert_eq!(unlocked.keys.vault_secret, source_secret);
+        assert_eq!(unlocked.keys.data_key, derive_keys(&source_secret).data_key);
+    }
+
+    #[test]
+    fn enroll_from_phrase_rejects_invalid_bip39() {
+        let (dir, vault_mutex) = setup();
+        let result =
+            enroll_vault_from_phrase_inner(dir.path(), &vault_mutex, "not a valid phrase", "pw");
+        assert_eq!(result.unwrap_err(), "recovery phrase not recognized");
+    }
+
+    #[test]
+    fn enroll_from_phrase_rejects_when_vault_already_exists() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+        let secret = [0x42u8; 32];
+        let phrase = encode_phrase(&secret).join(" ");
+        let result = enroll_vault_from_phrase_inner(dir.path(), &vault_mutex, &phrase, "pw");
+        assert_eq!(result.unwrap_err(), "vault already initialized");
+    }
+
+    #[test]
+    fn get_enrollment_phrase_round_trips_to_vault_secret() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+
+        let phrase = {
+            let guard = vault_mutex.lock().unwrap();
+            let unlocked = guard.as_ref().unwrap();
+            encode_phrase(&unlocked.keys.vault_secret)
+        };
+        assert_eq!(phrase.len(), 24);
+
+        let recovered = decode_phrase(&phrase.join(" ")).unwrap();
+        let guard = vault_mutex.lock().unwrap();
+        let unlocked = guard.as_ref().unwrap();
+        assert_eq!(recovered, unlocked.keys.vault_secret);
     }
 }

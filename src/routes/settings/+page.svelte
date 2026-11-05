@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { configureSync, getSyncStatus, runSync } from "$lib/sync";
+  import { invoke } from "@tauri-apps/api/core";
+  import QRCode from "qrcode";
+  import { configureSync, getSyncConfig, getSyncStatus, runSync, revokeSync } from "$lib/sync";
   import type { SyncLastRun } from "$lib/generated/SyncLastRun";
 
   let serverUrl = $state("");
@@ -13,9 +15,47 @@
 
   let lastRun = $state<SyncLastRun | null>(null);
 
+  let enrolled = $state(false);
+  let revoking = $state(false);
+  let revokeResult = $state<string | null>(null);
+  let revokeError = $state<string | null>(null);
+
+  let enrollmentWords = $state<string[] | null>(null);
+  let enrollmentError = $state<string | null>(null);
+  let qrCanvas = $state<HTMLCanvasElement | null>(null);
+
+  $effect(() => {
+    if (qrCanvas && enrollmentWords) {
+      QRCode.toCanvas(qrCanvas, enrollmentWords.join(" "), { width: 200, margin: 2 });
+    }
+  });
+
   onMount(async () => {
     lastRun = await getSyncStatus().catch(() => null);
+    const cfg = await getSyncConfig().catch(() => null);
+    enrolled = cfg?.enrolled ?? false;
+
+    try {
+      enrollmentWords = await invoke<string[]>("get_enrollment_phrase");
+    } catch {
+      enrollmentError = "Unlock the vault to view your enrollment code.";
+    }
   });
+
+  async function handleRevoke() {
+    revoking = true;
+    revokeResult = null;
+    revokeError = null;
+    try {
+      await revokeSync();
+      enrolled = false;
+      revokeResult = "Enrollment revoked. All devices are now disconnected from the sync server.";
+    } catch (e) {
+      revokeError = e instanceof Error ? e.message : String(e);
+    } finally {
+      revoking = false;
+    }
+  }
 
   function validateUrl(url: string): string | null {
     if (!url.trim()) return "Server URL is required.";
@@ -97,6 +137,46 @@
         Never synced
       {/if}
     </p>
+  </section>
+
+  <section class="section">
+    <h2>Enrollment Code</h2>
+    {#if enrollmentError}
+      <p class="muted">{enrollmentError}</p>
+    {:else if enrollmentWords}
+      <p class="phrase-instructions">
+        On the new device, choose "Enroll from another device" and enter this phrase.
+      </p>
+      <div class="phrase-grid">
+        {#each enrollmentWords as word, i (i)}
+          <div class="phrase-word">
+            <span class="word-num">{i + 1}</span>
+            <span class="word-text">{word}</span>
+          </div>
+        {/each}
+      </div>
+      <canvas bind:this={qrCanvas} class="qr-canvas"></canvas>
+    {/if}
+  </section>
+
+  <section class="section">
+    <h2>Enrollment</h2>
+    <p class="status-line">
+      {enrolled ? "Connected to sync server." : "Not enrolled with a sync server."}
+    </p>
+    <button
+      onclick={handleRevoke}
+      disabled={!enrolled || revoking}
+      class="btn-danger"
+    >
+      {revoking ? "Revoking…" : "Revoke enrollment"}
+    </button>
+    {#if revokeResult}
+      <p class="success">{revokeResult}</p>
+    {/if}
+    {#if revokeError}
+      <p class="error">{revokeError}</p>
+    {/if}
   </section>
 </div>
 
@@ -189,5 +269,79 @@
     font-size: 12px;
     color: var(--muted-foreground);
     margin: 10px 0 0;
+  }
+
+  .muted {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    margin: 0;
+  }
+
+  .phrase-instructions {
+    font-size: 13px;
+    color: var(--muted-foreground);
+    margin: 0 0 12px;
+    line-height: 1.5;
+  }
+
+  .phrase-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 6px;
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .phrase-word {
+    display: flex;
+    align-items: baseline;
+    gap: 5px;
+    padding: 4px 6px;
+    background: var(--background);
+    border: 1px solid var(--border);
+  }
+
+  .word-num {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--muted-foreground);
+    min-width: 14px;
+    text-align: right;
+    user-select: none;
+  }
+
+  .word-text {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--foreground);
+    font-weight: 500;
+  }
+
+  .qr-canvas {
+    display: block;
+    border: 1px solid var(--border);
+  }
+
+  .btn-danger {
+    padding: 8px 16px;
+    background: var(--destructive);
+    color: var(--destructive-foreground, #fff);
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-danger:hover:not(:disabled) {
+    opacity: 0.9;
   }
 </style>

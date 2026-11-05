@@ -2,6 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, Manager};
 use ts_rs::TS;
 
+use crate::commands::require_unlocked;
 use crate::storage::vault_file::{read_vault_file, write_vault_file};
 use crate::sync::{apply, bundle, client, signing};
 
@@ -327,6 +328,49 @@ pub async fn get_sync_status(app: AppHandle) -> Result<Option<SyncLastRun>, Stri
             }))
         }
     }
+}
+
+#[tauri::command]
+pub async fn revoke_sync(app: AppHandle) -> Result<(), String> {
+    let vault_state = app.state::<crate::crypto::VaultState>();
+    require_unlocked(&vault_state)?;
+
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let cfg = read_vault_file(&app_dir)?
+        .ok_or_else(|| "not configured".to_string())?;
+
+    let server_url = cfg
+        .server_url
+        .as_deref()
+        .ok_or_else(|| "not configured".to_string())?
+        .to_string();
+
+    let device_id = cfg
+        .sync_device_id
+        .clone()
+        .ok_or_else(|| "not enrolled".to_string())?;
+
+    let seed = {
+        let guard = vault_state
+            .0
+            .lock()
+            .map_err(|_| "vault lock poisoned".to_string())?;
+        let unlocked = guard.as_ref().ok_or("locked")?;
+        unlocked.keys.sync_signing_seed
+    };
+
+    let (signing_key, _) = signing::keypair_from_seed(&seed);
+    let http = reqwest::Client::new();
+    client::revoke_device(&http, &server_url, &device_id, &signing_key).await?;
+
+    let mut updated_cfg = read_vault_file(&app_dir)?
+        .ok_or_else(|| "vault.json not found".to_string())?;
+    updated_cfg.sync_device_id = None;
+    write_vault_file(&app_dir, &updated_cfg)
 }
 
 #[cfg(test)]

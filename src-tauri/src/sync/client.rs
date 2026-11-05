@@ -136,6 +136,36 @@ pub async fn pull_blobs(
     serde_json::from_str(&body).map_err(|e| e.to_string())
 }
 
+pub async fn revoke_device(
+    http: &reqwest::Client,
+    server_url: &str,
+    device_id: &str,
+    signing_key: &SigningKey,
+) -> Result<(), String> {
+    let path_and_query = format!("/sync/devices/{device_id}");
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path_and_query);
+
+    let resp = authenticated_request(
+        http,
+        "DELETE",
+        &url,
+        &path_and_query,
+        None,
+        device_id,
+        signing_key,
+    )
+    .await?;
+
+    let status = resp.status();
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+
+    if !status.is_success() {
+        return Err(format!("{status}: {body}"));
+    }
+
+    Ok(())
+}
+
 async fn authenticated_request(
     http: &reqwest::Client,
     method: &str,
@@ -151,6 +181,7 @@ async fn authenticated_request(
     let mut req = match method {
         "POST" => http.post(url),
         "GET" => http.get(url),
+        "DELETE" => http.delete(url),
         other => return Err(format!("unsupported method: {other}")),
     };
 

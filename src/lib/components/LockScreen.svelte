@@ -12,7 +12,8 @@
     | "password_entry"
     | "show_phrase"
     | "verify_phrase"
-    | "restore_phrase";
+    | "restore_phrase"
+    | "enroll_phrase";
 
   let setupPhase = $state<SetupPhase>("password_entry");
   let password = $state("");
@@ -23,6 +24,10 @@
   let restorePhrase = $state("");
   let newPassword = $state("");
   let confirmNewPassword = $state("");
+
+  let enrollPhrase = $state("");
+  let enrollPassword = $state("");
+  let enrollConfirmPassword = $state("");
 
   let phraseWords = $state<string[]>([]);
   let challenges = $state<Challenge[]>([]);
@@ -118,6 +123,37 @@
     error = null;
     setupPhase = "password_entry";
   }
+
+  function goToEnroll() {
+    error = null;
+    enrollPhrase = "";
+    enrollPassword = "";
+    enrollConfirmPassword = "";
+    setupPhase = "enroll_phrase";
+  }
+
+  async function handleEnrollSubmit(e: Event) {
+    e.preventDefault();
+    error = validatePassword(enrollPassword, enrollConfirmPassword, true);
+    if (error) return;
+    if (!enrollPhrase.trim()) {
+      error = "Recovery phrase is required.";
+      return;
+    }
+
+    submitting = true;
+    try {
+      await invoke("enroll_vault_from_phrase", {
+        phrase: enrollPhrase.trim(),
+        password: enrollPassword,
+      });
+      onUnlocked();
+    } catch {
+      error = "Recovery phrase not recognized.";
+    } finally {
+      submitting = false;
+    }
+  }
 </script>
 
 {#snippet passwordEntryContent()}
@@ -165,6 +201,10 @@
       <button class="forgot-link" onclick={goToRestore}>
         Forgot your password?
       </button>
+    {:else}
+      <button class="forgot-link" onclick={goToEnroll}>
+        Enroll from another device
+      </button>
     {/if}
   </form>
 {/snippet}
@@ -211,6 +251,56 @@
     {/if}
     <button class="forgot-link" onclick={goToUnlock}>
       Back to unlock
+    </button>
+  </form>
+{/snippet}
+
+{#snippet enrollPhraseContent()}
+  <h1 class="mode-label">Enroll from another device</h1>
+  <p class="phrase-instructions">
+    Enter the 24-word phrase from your existing device, then set a master password for this device.
+  </p>
+  <form class="lock-form restore-form" onsubmit={handleEnrollSubmit}>
+    <textarea
+      class="phrase-textarea"
+      placeholder="word1 word2 word3 ..."
+      bind:value={enrollPhrase}
+      disabled={submitting}
+      rows={4}
+      spellcheck={false}
+      autocomplete="off"
+      autocapitalize="off"
+    ></textarea>
+    <div class="field">
+      <Input
+        type="password"
+        placeholder="New master password"
+        bind:value={enrollPassword}
+        disabled={submitting}
+        autocomplete="new-password"
+      />
+    </div>
+    <div class="field">
+      <Input
+        type="password"
+        placeholder="Confirm password"
+        bind:value={enrollConfirmPassword}
+        disabled={submitting}
+        autocomplete="new-password"
+      />
+    </div>
+    <Button
+      type="submit"
+      size="lg"
+      disabled={submitting || !enrollPhrase.trim()}
+    >
+      Enroll this device
+    </Button>
+    {#if error}
+      <p class="error">{error}</p>
+    {/if}
+    <button class="forgot-link" onclick={goToUnlock}>
+      Back to setup
     </button>
   </form>
 {/snippet}
@@ -277,6 +367,8 @@
       {@render passwordEntryContent()}
     {:else if setupPhase === "restore_phrase"}
       {@render restorePhraseContent()}
+    {:else if setupPhase === "enroll_phrase"}
+      {@render enrollPhraseContent()}
     {:else if setupPhase === "show_phrase"}
       {@render showPhraseContent()}
     {:else if setupPhase === "verify_phrase"}

@@ -4,7 +4,7 @@ mod handlers;
 mod plaid;
 mod sync_handlers;
 
-use axum::{Router, extract::DefaultBodyLimit, routing::{get, post}};
+use axum::{Router, extract::DefaultBodyLimit, routing::{delete, get, post}};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -59,6 +59,7 @@ async fn main() {
         .route("/sync/enroll", post(sync_handlers::enroll).layer(DefaultBodyLimit::max(4 * 1024)))
         .route("/sync/push", post(sync_handlers::push).layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/sync/pull", get(sync_handlers::pull))
+        .route("/sync/devices/:device_id", delete(sync_handlers::revoke_device))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

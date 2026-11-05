@@ -80,6 +80,23 @@ impl Db {
         Ok(conn.last_insert_rowid())
     }
 
+    pub fn delete_device(&self, device_id: &str) -> Result<bool> {
+        let conn = self.0.lock().unwrap();
+        // Delete associated blobs before the device row to maintain FK integrity.
+        // After revocation a re-enrolled device (new UUID, same keypair) starts
+        // pushing new blobs; existing blobs from the old device are no longer
+        // needed on the server because all devices retain the full dataset locally.
+        conn.execute(
+            "DELETE FROM sync_blobs WHERE device_id = ?1",
+            params![device_id],
+        )?;
+        let rows_affected = conn.execute(
+            "DELETE FROM devices WHERE id = ?1",
+            params![device_id],
+        )?;
+        Ok(rows_affected > 0)
+    }
+
     pub fn pull_blobs(&self, after: i64) -> Result<Vec<BlobRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -150,5 +167,30 @@ mod tests {
         let blobs_after = db.pull_blobs(seq1).unwrap();
         assert_eq!(blobs_after.len(), 1);
         assert_eq!(blobs_after[0].seq, seq2);
+    }
+
+    #[test]
+    fn delete_device_removes_row_and_returns_true() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        assert!(db.delete_device("dev-1").unwrap());
+        assert!(db.find_device_by_id("dev-1").unwrap().is_none());
+    }
+
+    #[test]
+    fn delete_device_missing_returns_false() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(!db.delete_device("nonexistent").unwrap());
+    }
+
+    #[test]
+    fn delete_device_also_removes_associated_blobs() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        db.insert_blob("dev-1", b"payload1", "2024-01-01T00:00:00Z").unwrap();
+        db.insert_blob("dev-1", b"payload2", "2024-01-01T00:00:01Z").unwrap();
+        assert!(db.delete_device("dev-1").unwrap());
+        let blobs = db.pull_blobs(0).unwrap();
+        assert_eq!(blobs.len(), 0);
     }
 }

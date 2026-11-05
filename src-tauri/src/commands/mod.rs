@@ -65,6 +65,7 @@ mod security_gate {
         let conn = open_connection(":memory:", None).expect("in-memory db for test");
         VaultState(Mutex::new(Some(UnlockedVault {
             keys: VaultKeys {
+                vault_secret: [0u8; 32],
                 data_key: [0u8; 32],
                 ingest_secret: [0u8; 32],
                 sync_signing_seed: [0u8; 32],

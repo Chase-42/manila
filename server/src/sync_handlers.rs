@@ -165,6 +165,39 @@ pub async fn pull(
     }
 }
 
+// ── Revocation ────────────────────────────────────────────────────────────────
+
+pub async fn revoke_device(
+    State(state): State<AppState>,
+    AuthDevice { device_id: auth_device_id }: AuthDevice,
+    axum::extract::Path(path_device_id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    if auth_device_id != path_device_id {
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "device_id mismatch" })));
+    }
+
+    let db = state.db.clone();
+    let id = path_device_id.clone();
+    let result = match tokio::task::spawn_blocking(move || db.delete_device(&id))
+        .await
+    {
+        Err(_) => {
+            tracing::error!("spawn_blocking panicked on delete_device");
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })));
+        }
+        Ok(r) => r,
+    };
+
+    match result {
+        Ok(true) => (StatusCode::OK, Json(json!({}))),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))),
+        Err(e) => {
+            tracing::error!("db error on delete_device: {e}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
+        }
+    }
+}
+
 fn chrono_now() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -489,6 +522,83 @@ mod tests {
             .body(Body::empty())
             .unwrap();
         let resp = push_pull_app(auth_state()).oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Revocation tests ──────────────────────────────────────────────────────
+
+    fn revoke_app(state: AppState) -> Router {
+        Router::new()
+            .route("/sync/devices/:device_id", axum::routing::delete(revoke_device))
+            .with_state(state)
+    }
+
+    fn signed_delete(device_id: &str, ts: &str) -> Request<Body> {
+        let uri = format!("/sync/devices/{device_id}");
+        let msg = format!("DELETE\n{uri}\n{ts}");
+        let sig = hex::encode(sk().sign(msg.as_bytes()).to_bytes());
+        Request::builder()
+            .method("DELETE")
+            .uri(uri)
+            .header("x-manila-device-id", "auth-device")
+            .header("x-manila-timestamp", ts)
+            .header("x-manila-sig", sig)
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn revoke_own_device_returns_200_and_removes_device() {
+        let state = auth_state();
+        let ts = now_ts();
+        let resp = revoke_app(state.clone())
+            .oneshot(signed_delete("auth-device", &ts))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert!(state.db.find_device_by_id("auth-device").unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn revoke_mismatched_device_returns_403() {
+        let state = auth_state();
+        // Enroll a second device so it exists.
+        state.db.get_or_create_device("other-device", &"bb".repeat(32), "2024-01-01T00:00:00Z").unwrap();
+        let ts = now_ts();
+        let resp = revoke_app(state)
+            .oneshot(signed_delete("other-device", &ts))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn revoke_then_retry_returns_auth_failure() {
+        // After revocation the device is gone from the registry; a second
+        // attempt fails at the auth layer (401), not the handler layer.
+        let state = auth_state();
+        let ts = now_ts();
+        revoke_app(state.clone())
+            .oneshot(signed_delete("auth-device", &ts))
+            .await
+            .unwrap();
+
+        let ts2 = now_ts();
+        let resp = revoke_app(state)
+            .oneshot(signed_delete("auth-device", &ts2))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn revoke_without_auth_returns_400() {
+        let req = Request::builder()
+            .method("DELETE")
+            .uri("/sync/devices/auth-device")
+            .body(Body::empty())
+            .unwrap();
+        let resp = revoke_app(auth_state()).oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 }

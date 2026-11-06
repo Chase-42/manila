@@ -12,6 +12,8 @@ pub struct VaultFileConfig {
     pub server_url: Option<String>,
     #[serde(default)]
     pub sync_device_id: Option<String>,
+    #[serde(default)]
+    pub biometric_enabled: bool,
 }
 
 impl VaultFileConfig {
@@ -28,6 +30,7 @@ impl VaultFileConfig {
             created_at: created_at.to_string(),
             server_url: None,
             sync_device_id: None,
+            biometric_enabled: false,
         }
     }
 

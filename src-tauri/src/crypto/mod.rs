@@ -2,6 +2,7 @@ use std::sync::Mutex;
 use thiserror::Error;
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
+pub mod biometric;
 pub mod field;
 pub mod kdf;
 pub mod keys;
@@ -16,6 +17,10 @@ pub enum CryptoError {
     InvalidBlobLength,
     #[error("invalid recovery phrase")]
     InvalidPhrase,
+    #[error("biometric store failed")]
+    BiometricStoreFailed,
+    #[error("biometric unlock failed")]
+    BiometricUnlockFailed,
 }
 
 // In-memory keys derived from the vault secret. Never crosses IPC.

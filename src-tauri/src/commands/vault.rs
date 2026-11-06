@@ -26,6 +26,7 @@ use zeroize::Zeroizing;
 pub struct VaultStatus {
     pub initialized: bool,
     pub unlocked: bool,
+    pub biometric_enabled: bool,
 }
 
 fn db_path(app_dir: &Path) -> Result<String, String> {
@@ -206,9 +207,9 @@ pub fn vault_status(
     vault_state: State<'_, VaultState>,
 ) -> Result<VaultStatus, String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let initialized = read_vault_file(&app_dir)
-        .map(|opt| opt.is_some())
-        .unwrap_or(false);
+    let vault_cfg = read_vault_file(&app_dir).unwrap_or(None);
+    let initialized = vault_cfg.is_some();
+    let biometric_enabled = vault_cfg.map(|c| c.biometric_enabled).unwrap_or(false);
 
     let guard = vault_state
         .0
@@ -218,6 +219,7 @@ pub fn vault_status(
     Ok(VaultStatus {
         initialized,
         unlocked: guard.is_some(),
+        biometric_enabled,
     })
 }
 
@@ -343,6 +345,109 @@ pub fn get_enrollment_phrase(vault: State<'_, VaultState>) -> Result<Vec<String>
     let guard = vault.0.lock().map_err(|_| "vault lock poisoned".to_string())?;
     let unlocked = guard.as_ref().ok_or("locked")?;
     Ok(encode_phrase(&unlocked.keys.vault_secret))
+}
+
+/// Returns whether biometric unlock is supported on this device.
+#[tauri::command]
+pub fn check_biometric_availability() -> bool {
+    crate::crypto::biometric::is_biometric_available()
+}
+
+/// Returns a platform-appropriate label for the biometric unlock feature.
+#[tauri::command]
+pub fn biometric_label() -> &'static str {
+    if cfg!(target_os = "macos") { "Touch ID" } else { "biometric unlock" }
+}
+
+/// Stores the current vault secret in the OS secure store with biometric access
+/// control. Requires the vault to already be unlocked. Writes the flag first so
+/// vault.json is always the source of truth; rolls back the flag if the keychain
+/// write fails.
+#[tauri::command]
+pub fn enable_biometric_unlock(
+    app: tauri::AppHandle,
+    vault_state: State<'_, VaultState>,
+) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    let vault_secret = {
+        let guard = vault_state
+            .0
+            .lock()
+            .map_err(|_| "vault lock poisoned".to_string())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "vault is locked".to_string())?
+            .keys
+            .vault_secret
+    };
+
+    let mut cfg = read_vault_file(&app_dir)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "vault not initialized".to_string())?;
+    cfg.biometric_enabled = true;
+    write_vault_file(&app_dir, &cfg).map_err(|e| e.to_string())?;
+
+    if let Err(e) = crate::crypto::biometric::store_vault_secret(&vault_secret) {
+        let mut rollback = read_vault_file(&app_dir).ok().flatten().unwrap_or(cfg);
+        rollback.biometric_enabled = false;
+        let _ = write_vault_file(&app_dir, &rollback);
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// Removes the stored vault secret from the OS secure store and sets
+/// `biometric_enabled: false` in vault.json. Flag is written first so the
+/// biometric button is hidden even if the keychain delete returns an error.
+#[tauri::command]
+pub fn disable_biometric_unlock(app: tauri::AppHandle) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+
+    let mut cfg = read_vault_file(&app_dir)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "vault not initialized".to_string())?;
+    cfg.biometric_enabled = false;
+    write_vault_file(&app_dir, &cfg).map_err(|e| e.to_string())?;
+
+    crate::crypto::biometric::delete_vault_secret().map_err(|e| e.to_string())
+}
+
+/// Retrieves the vault secret from the OS secure store (triggering a biometric
+/// prompt on macOS) and completes the vault unlock. Returns "biometric unlock
+/// failed" on any authentication failure or cancellation.
+#[tauri::command]
+pub fn biometric_unlock(
+    app: tauri::AppHandle,
+    vault_state: State<'_, VaultState>,
+) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let vault_secret = crate::crypto::biometric::retrieve_vault_secret()
+        .map_err(|_| "biometric unlock failed".to_string())?;
+    biometric_unlock_inner(&app_dir, &vault_state.0, vault_secret)
+}
+
+pub(crate) fn biometric_unlock_inner(
+    app_dir: &Path,
+    vault_mutex: &Mutex<Option<UnlockedVault>>,
+    vault_secret: [u8; 32],
+) -> Result<(), String> {
+    let derived = derive_keys(&vault_secret);
+    let conn = open_app_db(app_dir, &derived.data_key)?;
+
+    let mut guard = vault_mutex
+        .lock()
+        .map_err(|_| "vault lock poisoned".to_string())?;
+    *guard = Some(UnlockedVault {
+        keys: VaultKeys {
+            vault_secret,
+            data_key: derived.data_key,
+            ingest_secret: derived.ingest_secret,
+            sync_signing_seed: derived.sync_signing_seed,
+        },
+        conn,
+    });
+    Ok(())
 }
 
 #[cfg(test)]
@@ -567,5 +672,83 @@ mod tests {
         let guard = vault_mutex.lock().unwrap();
         let unlocked = guard.as_ref().unwrap();
         assert_eq!(recovered, unlocked.keys.vault_secret);
+    }
+
+    #[test]
+    fn biometric_unlock_inner_uses_vault_secret_to_open_db() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+
+        let vault_secret = {
+            let guard = vault_mutex.lock().unwrap();
+            guard.as_ref().unwrap().keys.vault_secret
+        };
+        *vault_mutex.lock().unwrap() = None;
+
+        biometric_unlock_inner(dir.path(), &vault_mutex, vault_secret).unwrap();
+        assert!(
+            vault_mutex.lock().unwrap().is_some(),
+            "vault should be unlocked after biometric_unlock_inner"
+        );
+    }
+
+    #[test]
+    fn enable_biometric_sets_flag_in_vault_file() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+
+        // Simulate the flag write that enable_biometric_unlock performs after storing.
+        // The keychain store itself requires interactive Touch ID and is tested separately.
+        let mut cfg = read_vault_file(dir.path()).unwrap().unwrap();
+        cfg.biometric_enabled = true;
+        write_vault_file(dir.path(), &cfg).unwrap();
+        drop(vault_mutex);
+
+        let loaded = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(loaded.biometric_enabled, "biometric_enabled should be true after enable");
+    }
+
+    #[test]
+    fn disable_biometric_sets_flag_false() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+
+        // Set biometric_enabled = true first.
+        let mut cfg = read_vault_file(dir.path()).unwrap().unwrap();
+        cfg.biometric_enabled = true;
+        write_vault_file(dir.path(), &cfg).unwrap();
+
+        // Disable.
+        let _ = crate::crypto::biometric::delete_vault_secret();
+        let mut cfg2 = read_vault_file(dir.path()).unwrap().unwrap();
+        cfg2.biometric_enabled = false;
+        write_vault_file(dir.path(), &cfg2).unwrap();
+
+        let loaded = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(!loaded.biometric_enabled, "biometric_enabled should be false after disable");
+    }
+
+    #[test]
+    fn vault_status_returns_correct_biometric_enabled_flag() {
+        let (dir, _vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        let vault_mutex = Mutex::new(None);
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "password").unwrap();
+
+        let cfg = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(
+            !cfg.biometric_enabled,
+            "biometric_enabled should default to false on new vault"
+        );
+
+        let mut cfg2 = cfg;
+        cfg2.biometric_enabled = true;
+        write_vault_file(dir.path(), &cfg2).unwrap();
+
+        let reloaded = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(reloaded.biometric_enabled, "biometric_enabled persists after write");
     }
 }

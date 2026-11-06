@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
   import { vaultStatus } from "$lib/stores/vault";
   import { validatePassword } from "$lib/lockscreen";
@@ -20,6 +21,13 @@
   let confirmPassword = $state("");
   let error = $state<string | null>(null);
   let submitting = $state(false);
+  let biometricSubmitting = $state(false);
+  let showPasswordForm = $state(false);
+  let biometricLabel = $state("biometric unlock");
+
+  onMount(async () => {
+    biometricLabel = await invoke<string>("biometric_label");
+  });
 
   let restorePhrase = $state("");
   let newPassword = $state("");
@@ -37,6 +45,24 @@
   const failureMessage = $derived(
     isInitializing ? "Failed to create vault. Try again." : "Incorrect password.",
   );
+
+  const biometricEnabled = $derived(
+    !isInitializing && ($vaultStatus?.biometric_enabled ?? false),
+  );
+
+  async function handleBiometricUnlock() {
+    biometricSubmitting = true;
+    error = null;
+    try {
+      await invoke("biometric_unlock");
+      onUnlocked();
+    } catch {
+      error = "Biometric unlock failed. Use your password instead.";
+      showPasswordForm = true;
+    } finally {
+      biometricSubmitting = false;
+    }
+  }
 
   const allChallengesCorrect = $derived(
     challenges.length === 3 &&
@@ -161,52 +187,81 @@
     {isInitializing ? "Set up your vault" : "Welcome back"}
   </h1>
 
-  <form class="lock-form" onsubmit={handleSubmit}>
-    <div class="field">
-      <Input
-        type="password"
-        placeholder="Master password"
-        bind:value={password}
-        disabled={submitting}
-        autocomplete={isInitializing ? "new-password" : "current-password"}
-      />
-    </div>
+  {#if biometricEnabled && !showPasswordForm}
+    <div class="biometric-panel">
+      <Button
+        onclick={handleBiometricUnlock}
+        disabled={biometricSubmitting}
+        size="lg"
+        class="unlock-btn"
+      >
+        {biometricSubmitting ? "Verifying…" : `Use ${biometricLabel}`}
+      </Button>
 
-    {#if isInitializing}
+      {#if error}
+        <p class="error">{error}</p>
+      {/if}
+
+      <button
+        class="forgot-link"
+        onclick={() => { showPasswordForm = true; error = null; }}
+      >
+        Use password instead
+      </button>
+    </div>
+  {:else}
+    <form class="lock-form" onsubmit={handleSubmit}>
       <div class="field">
         <Input
           type="password"
-          placeholder="Confirm password"
-          bind:value={confirmPassword}
+          placeholder="Master password"
+          bind:value={password}
           disabled={submitting}
-          autocomplete="new-password"
+          autocomplete={isInitializing ? "new-password" : "current-password"}
         />
       </div>
-    {/if}
 
-    <Button
-      type="submit"
-      class="unlock-btn"
-      disabled={submitting}
-      size="lg"
-    >
-      {isInitializing ? "Create vault" : "Unlock"}
-    </Button>
+      {#if isInitializing}
+        <div class="field">
+          <Input
+            type="password"
+            placeholder="Confirm password"
+            bind:value={confirmPassword}
+            disabled={submitting}
+            autocomplete="new-password"
+          />
+        </div>
+      {/if}
 
-    {#if error}
-      <p class="error">{error}</p>
-    {/if}
+      <Button
+        type="submit"
+        class="unlock-btn"
+        disabled={submitting}
+        size="lg"
+      >
+        {isInitializing ? "Create vault" : "Unlock"}
+      </Button>
 
-    {#if !isInitializing}
-      <button class="forgot-link" onclick={goToRestore}>
-        Forgot your password?
-      </button>
-    {:else}
-      <button class="forgot-link" onclick={goToEnroll}>
-        Enroll from another device
-      </button>
-    {/if}
-  </form>
+      {#if error}
+        <p class="error">{error}</p>
+      {/if}
+
+      {#if !isInitializing}
+        {#if biometricEnabled}
+          <button class="forgot-link" onclick={() => { showPasswordForm = false; error = null; }}>
+            Back to {biometricLabel}
+          </button>
+        {/if}
+        <button class="forgot-link" onclick={goToRestore}>
+          Forgot your password?
+        </button>
+      {:else}
+        <button class="forgot-link" onclick={goToEnroll}>
+          Enroll from another device
+        </button>
+      {/if}
+    </form>
+  {/if}
 {/snippet}
 
 {#snippet restorePhraseContent()}

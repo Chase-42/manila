@@ -4,6 +4,7 @@
   import QRCode from "qrcode";
   import { configureSync, getSyncConfig, getSyncStatus, runSync, revokeSync } from "$lib/sync";
   import type { SyncLastRun } from "$lib/generated/SyncLastRun";
+  import { vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
 
   let serverUrl = $state("");
   let urlError = $state<string | null>(null);
@@ -19,6 +20,11 @@
   let revoking = $state(false);
   let revokeResult = $state<string | null>(null);
   let revokeError = $state<string | null>(null);
+
+  let biometricAvailable = $state(false);
+  let biometricLabel = $state("biometric unlock");
+  let biometricWorking = $state(false);
+  let biometricError = $state<string | null>(null);
 
   let enrollmentWords = $state<string[] | null>(null);
   let enrollmentError = $state<string | null>(null);
@@ -40,7 +46,36 @@
     } catch {
       enrollmentError = "Unlock the vault to view your enrollment code.";
     }
+
+    biometricAvailable = await invoke<boolean>("check_biometric_availability").catch(() => false);
+    biometricLabel = await invoke<string>("biometric_label").catch(() => "biometric unlock");
   });
+
+  async function handleEnableBiometric() {
+    biometricWorking = true;
+    biometricError = null;
+    try {
+      await invoke("enable_biometric_unlock");
+      await refreshVaultStatus();
+    } catch (e) {
+      biometricError = e instanceof Error ? e.message : String(e);
+    } finally {
+      biometricWorking = false;
+    }
+  }
+
+  async function handleDisableBiometric() {
+    biometricWorking = true;
+    biometricError = null;
+    try {
+      await invoke("disable_biometric_unlock");
+      await refreshVaultStatus();
+    } catch (e) {
+      biometricError = e instanceof Error ? e.message : String(e);
+    } finally {
+      biometricWorking = false;
+    }
+  }
 
   async function handleRevoke() {
     revoking = true;
@@ -178,6 +213,41 @@
       <p class="error">{revokeError}</p>
     {/if}
   </section>
+
+  {#if biometricAvailable}
+    <section class="section">
+      <h2>Security</h2>
+      {#if !$vaultStatus?.unlocked}
+        <p class="muted">Unlock the vault to manage biometric unlock.</p>
+      {:else}
+        <p class="status-line">
+          {$vaultStatus?.biometric_enabled
+            ? `${biometricLabel} unlock is enabled.`
+            : `${biometricLabel} unlock is disabled.`}
+        </p>
+        {#if $vaultStatus?.biometric_enabled}
+          <button
+            onclick={handleDisableBiometric}
+            disabled={biometricWorking}
+            class="btn-danger"
+          >
+            {biometricWorking ? "Disabling…" : "Disable biometric unlock"}
+          </button>
+        {:else}
+          <button
+            onclick={handleEnableBiometric}
+            disabled={biometricWorking}
+            class="btn-primary"
+          >
+            {biometricWorking ? "Enabling…" : `Enable ${biometricLabel} unlock`}
+          </button>
+        {/if}
+        {#if biometricError}
+          <p class="error">{biometricError}</p>
+        {/if}
+      {/if}
+    </section>
+  {/if}
 </div>
 
 <style>

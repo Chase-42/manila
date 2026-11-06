@@ -413,6 +413,60 @@ pub fn disable_biometric_unlock(app: tauri::AppHandle) -> Result<(), String> {
     crate::crypto::biometric::delete_vault_secret().map_err(|e| e.to_string())
 }
 
+pub(crate) fn change_password_inner(
+    app_dir: &Path,
+    vault_mutex: &Mutex<Option<UnlockedVault>>,
+    current_password: &str,
+    new_password: &str,
+) -> Result<(), String> {
+    let vault_secret = {
+        let guard = vault_mutex
+            .lock()
+            .map_err(|_| "vault lock poisoned".to_string())?;
+        guard
+            .as_ref()
+            .ok_or_else(|| "locked".to_string())?
+            .keys
+            .vault_secret
+    };
+
+    let cfg = read_vault_file(app_dir)?.ok_or_else(|| "vault not initialized".to_string())?;
+
+    let salt_bytes = cfg.salt_bytes()?;
+    let salt: [u8; 32] = salt_bytes
+        .try_into()
+        .map_err(|_| "incorrect password".to_string())?;
+
+    let blob = cfg.encrypted_vault_secret_bytes()?;
+    let master_key = derive_master_key(current_password.as_bytes(), &salt);
+    // AEAD tag already authenticates the current password; this check also
+    // ensures the decrypted bytes agree with the in-memory vault_secret.
+    let decrypted = decrypt_vault_secret(&master_key, &blob)
+        .map_err(|_| "incorrect password".to_string())?;
+    if decrypted != vault_secret {
+        return Err("incorrect password".to_string());
+    }
+
+    let mut new_salt = [0u8; 32];
+    OsRng.fill_bytes(&mut new_salt);
+    let new_master_key = derive_master_key(new_password.as_bytes(), &new_salt);
+    let new_blob = encrypt_vault_secret(&new_master_key, &vault_secret);
+
+    let new_cfg = cfg.update_key_material(&new_salt, &new_blob);
+    write_vault_file(app_dir, &new_cfg)
+}
+
+#[tauri::command]
+pub fn change_password(
+    app: tauri::AppHandle,
+    vault_state: State<'_, VaultState>,
+    current_password: String,
+    new_password: String,
+) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    change_password_inner(&app_dir, &vault_state.0, &current_password, &new_password)
+}
+
 /// Retrieves the vault secret from the OS secure store (triggering a biometric
 /// prompt on macOS) and completes the vault unlock. Returns "biometric unlock
 /// failed" on any authentication failure or cancellation.
@@ -729,6 +783,77 @@ mod tests {
 
         let loaded = read_vault_file(dir.path()).unwrap().unwrap();
         assert!(!loaded.biometric_enabled, "biometric_enabled should be false after disable");
+    }
+
+    #[test]
+    fn change_password_happy_path() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "original").unwrap();
+
+        change_password_inner(dir.path(), &vault_mutex, "original", "changed").unwrap();
+
+        // Vault stays unlocked after the change.
+        assert!(vault_mutex.lock().unwrap().is_some());
+
+        // Old password no longer works.
+        *vault_mutex.lock().unwrap() = None;
+        assert!(unlock_vault_inner(dir.path(), &vault_mutex, "original").is_err());
+
+        // New password works.
+        unlock_vault_inner(dir.path(), &vault_mutex, "changed").unwrap();
+        assert!(vault_mutex.lock().unwrap().is_some());
+    }
+
+    #[test]
+    fn change_password_wrong_current_returns_err() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "original").unwrap();
+
+        let salt_before = read_vault_file(dir.path()).unwrap().unwrap().salt;
+        let result = change_password_inner(dir.path(), &vault_mutex, "wrong", "new");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "incorrect password");
+
+        // vault.json is unchanged.
+        let salt_after = read_vault_file(dir.path()).unwrap().unwrap().salt;
+        assert_eq!(salt_before, salt_after);
+    }
+
+    #[test]
+    fn change_password_preserves_vault_json_fields() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "original").unwrap();
+
+        let mut cfg = read_vault_file(dir.path()).unwrap().unwrap();
+        cfg.biometric_enabled = true;
+        cfg.server_url = Some("https://example.com".to_string());
+        write_vault_file(dir.path(), &cfg).unwrap();
+
+        change_password_inner(dir.path(), &vault_mutex, "original", "new").unwrap();
+
+        let updated = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(updated.biometric_enabled, "biometric_enabled preserved");
+        assert_eq!(
+            updated.server_url,
+            Some("https://example.com".to_string()),
+            "server_url preserved"
+        );
+        assert!(updated.phrase_verifier.is_some(), "phrase_verifier preserved");
+    }
+
+    #[test]
+    fn change_password_requires_unlocked() {
+        let (dir, vault_mutex) = setup();
+        let ob = fresh_onboarding();
+        create_vault_inner(dir.path(), &vault_mutex, &ob, "original").unwrap();
+        *vault_mutex.lock().unwrap() = None;
+
+        let result = change_password_inner(dir.path(), &vault_mutex, "original", "new");
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "locked");
     }
 
     #[test]

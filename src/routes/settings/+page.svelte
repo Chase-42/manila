@@ -5,6 +5,7 @@
   import { configureSync, getSyncConfig, getSyncStatus, runSync, revokeSync } from "$lib/sync";
   import type { SyncLastRun } from "$lib/generated/SyncLastRun";
   import { vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
+  import { validatePassword } from "$lib/lockscreen";
 
   let serverUrl = $state("");
   let urlError = $state<string | null>(null);
@@ -25,6 +26,13 @@
   let biometricLabel = $state("biometric unlock");
   let biometricWorking = $state(false);
   let biometricError = $state<string | null>(null);
+
+  let currentPassword = $state("");
+  let newPassword = $state("");
+  let confirmNewPassword = $state("");
+  let changePwWorking = $state(false);
+  let changePwError = $state<string | null>(null);
+  let changePwSuccess = $state(false);
 
   let enrollmentWords = $state<string[] | null>(null);
   let enrollmentError = $state<string | null>(null);
@@ -112,6 +120,30 @@
       saveSuccess = true;
     } catch (e) {
       urlError = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  async function handleChangePassword(e: Event) {
+    e.preventDefault();
+    changePwError = null;
+    changePwSuccess = false;
+    const validationError = validatePassword(newPassword, confirmNewPassword, true);
+    if (validationError) {
+      changePwError = validationError;
+      return;
+    }
+    changePwWorking = true;
+    try {
+      await invoke("change_password", { currentPassword, newPassword });
+      changePwSuccess = true;
+      currentPassword = "";
+      newPassword = "";
+      confirmNewPassword = "";
+    } catch (e) {
+      changePwError =
+        String(e) === "incorrect password" ? "Incorrect password." : "Failed to change password.";
+    } finally {
+      changePwWorking = false;
     }
   }
 
@@ -211,6 +243,55 @@
     {/if}
     {#if revokeError}
       <p class="error">{revokeError}</p>
+    {/if}
+  </section>
+
+  <section class="section">
+    <h2>Change password</h2>
+    {#if !$vaultStatus?.unlocked}
+      <p class="muted">Unlock the vault to change your password.</p>
+    {:else}
+      <form onsubmit={handleChangePassword}>
+        <div class="field">
+          <label for="current-password">Current password</label>
+          <input
+            id="current-password"
+            type="password"
+            bind:value={currentPassword}
+            disabled={changePwWorking}
+            autocomplete="current-password"
+          />
+        </div>
+        <div class="field">
+          <label for="new-password">New password</label>
+          <input
+            id="new-password"
+            type="password"
+            bind:value={newPassword}
+            disabled={changePwWorking}
+            autocomplete="new-password"
+          />
+        </div>
+        <div class="field">
+          <label for="confirm-new-password">Confirm new password</label>
+          <input
+            id="confirm-new-password"
+            type="password"
+            bind:value={confirmNewPassword}
+            disabled={changePwWorking}
+            autocomplete="new-password"
+          />
+        </div>
+        {#if changePwError}
+          <p class="error">{changePwError}</p>
+        {/if}
+        {#if changePwSuccess}
+          <p class="success">Password changed.</p>
+        {/if}
+        <button type="submit" disabled={changePwWorking} class="btn-primary">
+          {changePwWorking ? "Changing…" : "Change password"}
+        </button>
+      </form>
     {/if}
   </section>
 

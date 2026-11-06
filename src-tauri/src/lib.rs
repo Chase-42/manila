@@ -101,6 +101,7 @@ pub fn run() {
             commands::vault::enable_biometric_unlock,
             commands::vault::disable_biometric_unlock,
             commands::vault::biometric_unlock,
+            commands::vault::change_password,
             commands::sync::configure_sync,
             commands::sync::get_sync_config,
             commands::sync::enroll_sync,

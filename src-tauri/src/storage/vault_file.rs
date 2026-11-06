@@ -49,6 +49,15 @@ impl VaultFileConfig {
             .map(|s| B64.decode(s).map_err(|e| e.to_string()))
             .transpose()
     }
+
+    /// Replaces salt and encrypted_vault_secret, preserving all other fields.
+    pub fn update_key_material(self, salt: &[u8], encrypted_vault_secret: &[u8]) -> Self {
+        Self {
+            salt: B64.encode(salt),
+            encrypted_vault_secret: B64.encode(encrypted_vault_secret),
+            ..self
+        }
+    }
 }
 
 pub fn read_vault_file(app_dir: &Path) -> Result<Option<VaultFileConfig>, String> {

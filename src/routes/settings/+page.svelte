@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
+  import { getVersion } from "@tauri-apps/api/app";
+  import { check, type Update } from "@tauri-apps/plugin-updater";
+  import { relaunch } from "@tauri-apps/plugin-process";
   import QRCode from "qrcode";
   import { configureSync, getSyncConfig, getSyncStatus, runSync, revokeSync } from "$lib/sync";
   import type { SyncLastRun } from "$lib/generated/SyncLastRun";
@@ -38,6 +41,16 @@
   let enrollmentError = $state<string | null>(null);
   let qrCanvas = $state<HTMLCanvasElement | null>(null);
 
+  type UpdateCheckState = "idle" | "checking" | "available" | "downloading" | "up-to-date" | "error";
+  let updateState = $state<UpdateCheckState>("idle");
+  let updateVersion = $state<string | null>(null);
+  let updateNotes = $state<string | undefined>();
+  let downloadPercent = $state<number | null>(null);
+  let updateError = $state<string | null>(null);
+  let currentVersion = $state<string | null>(null);
+  let installDone = $state(false);
+  let pendingUpdate = $state<Update | null>(null);
+
   $effect(() => {
     if (qrCanvas && enrollmentWords) {
       QRCode.toCanvas(qrCanvas, enrollmentWords.join(" "), { width: 200, margin: 2 });
@@ -45,6 +58,7 @@
   });
 
   onMount(async () => {
+    currentVersion = await getVersion().catch(() => null);
     lastRun = await getSyncStatus().catch(() => null);
     const cfg = await getSyncConfig().catch(() => null);
     enrolled = cfg?.enrolled ?? false;
@@ -144,6 +158,54 @@
         String(e) === "incorrect password" ? "Incorrect password." : "Failed to change password.";
     } finally {
       changePwWorking = false;
+    }
+  }
+
+  async function handleCheckForUpdates() {
+    updateState = "checking";
+    updateError = null;
+    updateVersion = null;
+    updateNotes = undefined;
+    installDone = false;
+    pendingUpdate = null;
+    try {
+      const result = await check();
+      if (result?.available) {
+        updateVersion = result.version;
+        updateNotes = result.body;
+        pendingUpdate = result;
+        updateState = "available";
+      } else {
+        updateState = "up-to-date";
+      }
+    } catch (e) {
+      updateError = String(e);
+      updateState = "error";
+    }
+  }
+
+  async function handleInstallUpdate() {
+    if (!pendingUpdate) return;
+    updateState = "downloading";
+    downloadPercent = null;
+    updateError = null;
+    let totalBytes: number | undefined;
+    let downloadedBytes = 0;
+    try {
+      await pendingUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started") {
+          totalBytes = event.data.contentLength;
+        } else if (event.event === "Progress") {
+          downloadedBytes += event.data.chunkLength;
+          if (totalBytes) {
+            downloadPercent = Math.round((downloadedBytes / totalBytes) * 100);
+          }
+        }
+      });
+      installDone = true;
+    } catch (e) {
+      updateError = String(e);
+      updateState = "error";
     }
   }
 
@@ -339,6 +401,46 @@
       {/if}
     </section>
   {/if}
+
+  <section class="section">
+    <h2>Updates</h2>
+    <p class="status-line">Current version: {currentVersion ?? "…"}</p>
+
+    {#if installDone}
+      <p class="success">Update installed.</p>
+      <button onclick={() => relaunch()} class="btn-primary">Restart now</button>
+    {:else}
+      {#if updateState === "available"}
+        <p class="update-available">Version {updateVersion} available</p>
+        {#if updateNotes}
+          <p class="update-notes">{updateNotes}</p>
+        {/if}
+        <button
+          onclick={handleInstallUpdate}
+          class="btn-primary"
+        >
+          Install
+        </button>
+      {:else if updateState === "downloading"}
+        <p class="status-line">
+          {downloadPercent !== null ? `Downloading… ${downloadPercent}%` : "Downloading…"}
+        </p>
+      {:else if updateState === "up-to-date"}
+        <p class="success">You're up to date.</p>
+      {:else if updateState === "error"}
+        <p class="error">{updateError}</p>
+      {/if}
+
+      <button
+        onclick={handleCheckForUpdates}
+        disabled={updateState === "checking" || updateState === "downloading"}
+        class="btn-primary"
+        style="margin-top: 10px;"
+      >
+        {updateState === "checking" ? "Checking…" : "Check for updates"}
+      </button>
+    {/if}
+  </section>
 </div>
 
 <style>
@@ -530,5 +632,20 @@
 
   .btn-danger:hover:not(:disabled) {
     opacity: 0.9;
+  }
+
+  .update-available {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--foreground);
+    margin: 0 0 8px;
+  }
+
+  .update-notes {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    margin: 0 0 10px;
+    white-space: pre-wrap;
+    line-height: 1.5;
   }
 </style>

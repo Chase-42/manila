@@ -38,6 +38,12 @@
       "desktop": {
         "schemes": ["manila"]
       }
+    },
+    "updater": {
+      "pubkey": "REPLACE_WITH_GENERATED_PUBKEY",
+      "endpoints": [
+        "REPLACE_WITH_UPDATE_ENDPOINT_URL/{{target}}/{{arch}}/{{current_version}}"
+      ]
     }
   }
 }

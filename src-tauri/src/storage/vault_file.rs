@@ -14,6 +14,8 @@ pub struct VaultFileConfig {
     pub sync_device_id: Option<String>,
     #[serde(default)]
     pub biometric_enabled: bool,
+    #[serde(default)]
+    pub subscription_expires_at: Option<String>,
 }
 
 impl VaultFileConfig {
@@ -31,6 +33,7 @@ impl VaultFileConfig {
             server_url: None,
             sync_device_id: None,
             biometric_enabled: false,
+            subscription_expires_at: None,
         }
     }
 

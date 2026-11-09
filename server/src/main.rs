@@ -1,3 +1,4 @@
+mod admin;
 mod auth;
 mod db;
 mod handlers;
@@ -15,6 +16,7 @@ use plaid::PlaidClient;
 pub struct AppState {
     pub plaid: Arc<PlaidClient>,
     pub db: Db,
+    pub admin_secret: String,
 }
 
 #[tokio::main]
@@ -26,6 +28,11 @@ async fn main() {
     let client_id = require_env("PLAID_CLIENT_ID");
     let secret = require_env("PLAID_SECRET");
     let plaid_env = require_env("PLAID_ENV");
+    let admin_secret = require_env("ADMIN_SECRET");
+    if admin_secret.is_empty() {
+        eprintln!("error: ADMIN_SECRET must not be empty");
+        std::process::exit(1);
+    }
     let port: u16 = std::env::var("PORT")
         .unwrap_or_else(|_| "3000".into())
         .parse()
@@ -49,7 +56,7 @@ async fn main() {
 
     let plaid = Arc::new(PlaidClient::new(client_id, secret, &plaid_env));
 
-    let state = AppState { plaid, db };
+    let state = AppState { plaid, db, admin_secret };
 
     let app = Router::new()
         .route("/health", get(handlers::health))
@@ -60,6 +67,7 @@ async fn main() {
         .route("/sync/push", post(sync_handlers::push).layer(DefaultBodyLimit::max(4 * 1024 * 1024)))
         .route("/sync/pull", get(sync_handlers::pull))
         .route("/sync/devices/:device_id", delete(sync_handlers::revoke_device))
+        .route("/admin/grant", post(admin::grant).layer(DefaultBodyLimit::max(1024)))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], port));

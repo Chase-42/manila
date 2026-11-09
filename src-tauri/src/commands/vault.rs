@@ -370,6 +370,7 @@ pub fn enable_biometric_unlock(
 ) -> Result<(), String> {
     let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
 
+    crate::commands::require_unlocked(&vault_state)?;
     let vault_secret = {
         let guard = vault_state
             .0
@@ -377,7 +378,7 @@ pub fn enable_biometric_unlock(
             .map_err(|_| "vault lock poisoned".to_string())?;
         guard
             .as_ref()
-            .ok_or_else(|| "vault is locked".to_string())?
+            .ok_or("locked")?
             .keys
             .vault_secret
     };
@@ -830,6 +831,8 @@ mod tests {
         let mut cfg = read_vault_file(dir.path()).unwrap().unwrap();
         cfg.biometric_enabled = true;
         cfg.server_url = Some("https://example.com".to_string());
+        cfg.sync_device_id = Some("device-id".to_string());
+        let created_at_before = cfg.created_at.clone();
         write_vault_file(dir.path(), &cfg).unwrap();
 
         change_password_inner(dir.path(), &vault_mutex, "original", "new").unwrap();
@@ -842,6 +845,12 @@ mod tests {
             "server_url preserved"
         );
         assert!(updated.phrase_verifier.is_some(), "phrase_verifier preserved");
+        assert_eq!(
+            updated.sync_device_id,
+            Some("device-id".to_string()),
+            "sync_device_id preserved"
+        );
+        assert_eq!(updated.created_at, created_at_before, "created_at preserved");
     }
 
     #[test]

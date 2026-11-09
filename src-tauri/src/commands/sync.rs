@@ -11,6 +11,7 @@ use crate::sync::{apply, bundle, client, signing};
 pub struct SyncConfig {
     pub server_url: Option<String>,
     pub enrolled: bool,
+    pub subscription_active: bool,
 }
 
 #[derive(Serialize, TS)]
@@ -51,12 +52,53 @@ pub async fn get_sync_config(app: AppHandle) -> Result<SyncConfig, String> {
         Some(cfg) => Ok(SyncConfig {
             server_url: cfg.server_url,
             enrolled: cfg.sync_device_id.is_some(),
+            subscription_active: is_subscription_active(cfg.subscription_expires_at.as_deref()),
         }),
         None => Ok(SyncConfig {
             server_url: None,
             enrolled: false,
+            subscription_active: false,
         }),
     }
+}
+
+const SUBSCRIPTION_GRACE_SECS: u64 = 7 * 24 * 60 * 60;
+
+fn is_subscription_active(expires_at: Option<&str>) -> bool {
+    let Some(s) = expires_at else { return false; };
+    let Some(exp_secs) = parse_sub_exp_secs(s) else { return false; };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    now <= exp_secs.saturating_add(SUBSCRIPTION_GRACE_SECS)
+}
+
+fn parse_sub_exp_secs(s: &str) -> Option<u64> {
+    let s = s.strip_suffix('Z')?;
+    let (date, time) = s.split_once('T')?;
+    let mut dp = date.splitn(3, '-');
+    let y: u64 = dp.next()?.parse().ok()?;
+    let mo: u64 = dp.next()?.parse().ok()?;
+    let d: u64 = dp.next()?.parse().ok()?;
+    let mut tp = time.splitn(3, ':');
+    let h: u64 = tp.next()?.parse().ok()?;
+    let mi: u64 = tp.next()?.parse().ok()?;
+    let sec: u64 = tp.next()?.parse().ok()?;
+    let mut days: u64 = 0;
+    for yr in 1970..y {
+        days += if sub_is_leap(yr) { 366 } else { 365 };
+    }
+    let mdays = [31u64, if sub_is_leap(y) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..mo {
+        days += mdays.get((m as usize).wrapping_sub(1))?;
+    }
+    days += d.checked_sub(1)?;
+    Some(days * 86400 + h * 3600 + mi * 60 + sec)
+}
+
+fn sub_is_leap(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 #[tauri::command]
@@ -137,7 +179,7 @@ pub async fn run_sync(app: AppHandle) -> Result<SyncStatus, String> {
     let (signing_key, _) = signing::keypair_from_seed(&seed);
 
     // Build push bundle while holding the mutex.
-    let push_data: Option<(Vec<u8>, i64)> = {
+    let push_data: Option<(Vec<u8>, i64, usize)> = {
         let vault_state = app.state::<crate::crypto::VaultState>();
         let guard = vault_state
             .0
@@ -149,13 +191,13 @@ pub async fn run_sync(app: AppHandle) -> Result<SyncStatus, String> {
             .query_row("SELECT COALESCE(MAX(id), 0) FROM sync_pending_changes", [], |r| r.get(0))
             .unwrap_or(0);
         match bundle::build_push_bundle(&unlocked.conn, &device_id, push_counter)? {
-            Some(bytes) => Some((bytes, max_pending_id)),
+            Some((bytes, change_count)) => Some((bytes, max_pending_id, change_count)),
             None => None,
         }
     };
 
     // Push if there's anything to push. On push error, return early.
-    let pushed_count: u32 = if let Some((bundle_bytes, max_pending_id)) = push_data {
+    let pushed_count: u32 = if let Some((bundle_bytes, max_pending_id, change_count)) = push_data {
         client::push_bundle(&http, &server_url, &bundle_bytes, &data_key, &device_id, &signing_key)
             .await?;
 
@@ -182,10 +224,7 @@ pub async fn run_sync(app: AppHandle) -> Result<SyncStatus, String> {
             )
             .map_err(|e| e.to_string())?;
 
-        // Count how many change entries were included (up to max_pending_id).
-        // We approximate this as the bundle's changes count — the bundle was built from deduped rows.
-        // Use max_pending_id as an upper bound for the count.
-        max_pending_id as u32
+        change_count as u32
     } else {
         0
     };
@@ -395,10 +434,12 @@ mod tests {
             Some(cfg) => SyncConfig {
                 server_url: cfg.server_url,
                 enrolled: cfg.sync_device_id.is_some(),
+                subscription_active: is_subscription_active(cfg.subscription_expires_at.as_deref()),
             },
             None => SyncConfig {
                 server_url: None,
                 enrolled: false,
+                subscription_active: false,
             },
         };
         assert!(result.server_url.is_none());
@@ -432,6 +473,7 @@ mod tests {
         let result = SyncConfig {
             server_url: loaded.server_url,
             enrolled: loaded.sync_device_id.is_some(),
+            subscription_active: is_subscription_active(loaded.subscription_expires_at.as_deref()),
         };
         assert!(result.enrolled);
     }
@@ -444,5 +486,60 @@ mod tests {
         let loaded = read_vault_file(dir.path()).unwrap().unwrap();
         assert!(loaded.server_url.is_none());
         assert!(loaded.sync_device_id.is_none());
+    }
+
+    #[test]
+    fn parse_sub_exp_secs_epoch() {
+        assert_eq!(parse_sub_exp_secs("1970-01-01T00:00:00Z"), Some(0));
+    }
+
+    #[test]
+    fn parse_sub_exp_secs_known_value() {
+        assert_eq!(parse_sub_exp_secs("2024-01-01T00:00:00Z"), Some(1704067200));
+    }
+
+    #[test]
+    fn is_subscription_active_future_expiry_returns_true() {
+        assert!(is_subscription_active(Some("2099-01-01T00:00:00Z")));
+    }
+
+    #[test]
+    fn is_subscription_active_expired_beyond_grace_returns_false() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        // Build an expiry 8 days in the past so it is outside the 7-day grace window.
+        let exp_secs = now.saturating_sub(8 * 24 * 3600);
+        let exp = format!("{}", exp_secs);
+        // Construct ISO-8601 from seconds for the assertion.
+        let (y, mo, d, h, mi, s) = secs_to_ymd_hms(exp_secs);
+        let exp_str = format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}Z");
+        assert!(!is_subscription_active(Some(&exp_str)));
+        let _ = exp;
+    }
+
+    fn secs_to_ymd_hms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
+        let s = secs % 60;
+        let total_minutes = secs / 60;
+        let mi = total_minutes % 60;
+        let total_hours = total_minutes / 60;
+        let h = total_hours % 24;
+        let mut days = total_hours / 24;
+        let mut y = 1970u64;
+        loop {
+            let dy = if sub_is_leap(y) { 366 } else { 365 };
+            if days < dy { break; }
+            days -= dy;
+            y += 1;
+        }
+        let mdays = [31u64, if sub_is_leap(y) { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut mo = 1u64;
+        for dm in &mdays {
+            if days < *dm { break; }
+            days -= dm;
+            mo += 1;
+        }
+        (y, mo, days + 1, h, mi, s)
     }
 }

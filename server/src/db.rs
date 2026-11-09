@@ -1,6 +1,8 @@
 use rusqlite::{Connection, Result, params};
 use std::sync::{Arc, Mutex};
 
+pub const SUBSCRIPTION_GRACE_SECS: u64 = 7 * 24 * 60 * 60; // 7 days
+
 #[derive(Clone)]
 pub struct Db(pub Arc<Mutex<Connection>>);
 
@@ -36,6 +38,12 @@ impl Db {
                 created_at  TEXT NOT NULL
             );",
         )?;
+        // Add subscription column to existing databases that predate this feature.
+        // Ignore "duplicate column name" (error code 1) from SQLite versions < 3.35
+        // that don't support IF NOT EXISTS on ALTER TABLE ADD COLUMN.
+        let _ = conn.execute_batch(
+            "ALTER TABLE devices ADD COLUMN subscription_expires_at TEXT;",
+        );
         Ok(())
     }
 
@@ -97,6 +105,51 @@ impl Db {
         Ok(rows_affected > 0)
     }
 
+    pub fn set_subscription(&self, device_id: &str, expires_at: &str) -> Result<bool> {
+        let conn = self.0.lock().unwrap();
+        let rows = conn.execute(
+            "UPDATE devices SET subscription_expires_at = ?1 WHERE id = ?2",
+            params![expires_at, device_id],
+        )?;
+        Ok(rows > 0)
+    }
+
+    pub fn find_device_subscription(&self, device_id: &str) -> Result<Option<String>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT subscription_expires_at FROM devices WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![device_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    // Returns true when the device has a subscription that has not expired
+    // beyond the 7-day grace period (SUBSCRIPTION_GRACE_SECS).
+    pub fn is_subscribed(&self, device_id: &str) -> Result<bool> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT subscription_expires_at FROM devices WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query(params![device_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(false);
+        };
+        let expires_at: Option<String> = row.get(0)?;
+        let Some(exp) = expires_at else {
+            return Ok(false);
+        };
+        let exp_secs = parse_iso8601_secs(&exp).unwrap_or(0);
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        Ok(now_secs <= exp_secs + SUBSCRIPTION_GRACE_SECS)
+    }
+
     pub fn pull_blobs(&self, after: i64) -> Result<Vec<BlobRow>> {
         let conn = self.0.lock().unwrap();
         let mut stmt = conn.prepare(
@@ -119,6 +172,39 @@ pub struct BlobRow {
     pub device_id: String,
     pub payload: Vec<u8>,
     pub created_at: String,
+}
+
+// Parses "YYYY-MM-DDTHH:MM:SSZ" to Unix seconds. Returns None on parse failure.
+pub fn parse_iso8601_secs(s: &str) -> Option<u64> {
+    let s = s.trim_end_matches('Z');
+    let (date, time) = s.split_once('T')?;
+    let mut dp = date.splitn(3, '-');
+    let y: u64 = dp.next()?.parse().ok()?;
+    let mo: u64 = dp.next()?.parse().ok()?;
+    let d: u64 = dp.next()?.parse().ok()?;
+    let mut tp = time.splitn(3, ':');
+    let h: u64 = tp.next()?.parse().ok()?;
+    let mi: u64 = tp.next()?.parse().ok()?;
+    let sec: u64 = tp.next()?.parse().ok()?;
+
+    // Days from epoch to start of year y.
+    let mut days: u64 = 0;
+    for yr in 1970..y {
+        days += if is_leap_year(yr) { 366 } else { 365 };
+    }
+    // Days within the year up to month mo.
+    let leap = is_leap_year(y);
+    let month_days: [u64; 12] = [31, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    for m in 1..mo {
+        days += month_days.get((m - 1) as usize).copied()?;
+    }
+    days += d.checked_sub(1)?;
+
+    Some(days * 86400 + h * 3600 + mi * 60 + sec)
+}
+
+pub(crate) fn is_leap_year(y: u64) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
 }
 
 #[cfg(test)]
@@ -192,5 +278,121 @@ mod tests {
         assert!(db.delete_device("dev-1").unwrap());
         let blobs = db.pull_blobs(0).unwrap();
         assert_eq!(blobs.len(), 0);
+    }
+
+    // ── Subscription tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn unsubscribed_device_is_not_subscribed() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        assert!(!db.is_subscribed("dev-1").unwrap());
+    }
+
+    #[test]
+    fn unknown_device_is_not_subscribed() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(!db.is_subscribed("nonexistent").unwrap());
+    }
+
+    #[test]
+    fn set_subscription_then_is_subscribed() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        // expires far in the future
+        assert!(db.set_subscription("dev-1", "2099-01-01T00:00:00Z").unwrap());
+        assert!(db.is_subscribed("dev-1").unwrap());
+    }
+
+    #[test]
+    fn set_subscription_missing_device_returns_false() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(!db.set_subscription("ghost", "2099-01-01T00:00:00Z").unwrap());
+    }
+
+    #[test]
+    fn find_device_subscription_returns_value_after_set() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        db.set_subscription("dev-1", "2099-06-15T12:00:00Z").unwrap();
+        assert_eq!(
+            db.find_device_subscription("dev-1").unwrap().as_deref(),
+            Some("2099-06-15T12:00:00Z"),
+        );
+    }
+
+    #[test]
+    fn find_device_subscription_returns_none_for_unknown() {
+        let db = Db::open_in_memory().unwrap();
+        // Device doesn't exist - returns Ok(None), not an error.
+        assert!(db.find_device_subscription("ghost").unwrap().is_none());
+    }
+
+    #[test]
+    fn grace_period_within_7_days_still_subscribed() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        // Set expiry to 6 days ago (within grace window).
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let exp_secs = now_secs - 6 * 24 * 3600;
+        let exp_str = secs_to_iso8601(exp_secs);
+        db.set_subscription("dev-1", &exp_str).unwrap();
+        assert!(db.is_subscribed("dev-1").unwrap());
+    }
+
+    #[test]
+    fn grace_period_beyond_7_days_not_subscribed() {
+        let db = Db::open_in_memory().unwrap();
+        db.get_or_create_device("dev-1", "aabbcc", "2024-01-01T00:00:00Z").unwrap();
+        // Set expiry to 8 days ago (outside grace window).
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let exp_secs = now_secs - 8 * 24 * 3600;
+        let exp_str = secs_to_iso8601(exp_secs);
+        db.set_subscription("dev-1", &exp_str).unwrap();
+        assert!(!db.is_subscribed("dev-1").unwrap());
+    }
+
+    #[test]
+    fn parse_iso8601_secs_known_epoch() {
+        // 1970-01-01T00:00:00Z should be 0
+        assert_eq!(parse_iso8601_secs("1970-01-01T00:00:00Z"), Some(0));
+    }
+
+    #[test]
+    fn parse_iso8601_secs_known_value() {
+        // 2024-01-01T00:00:00Z = 1704067200
+        assert_eq!(parse_iso8601_secs("2024-01-01T00:00:00Z"), Some(1704067200));
+    }
+
+    // Helper: convert Unix seconds back to an ISO-8601 string for test setup.
+    fn secs_to_iso8601(secs: u64) -> String {
+        let s = secs % 60;
+        let total_minutes = secs / 60;
+        let mi = total_minutes % 60;
+        let total_hours = total_minutes / 60;
+        let h = total_hours % 24;
+        let mut days = total_hours / 24;
+        let mut y = 1970u64;
+        loop {
+            let dy = if is_leap_year(y) { 366 } else { 365 };
+            if days < dy { break; }
+            days -= dy;
+            y += 1;
+        }
+        let leap = is_leap_year(y);
+        let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+        let mut mo = 1u64;
+        for dm in &months {
+            if days < *dm { break; }
+            days -= dm;
+            mo += 1;
+        }
+        format!("{y:04}-{mo:02}-{:02}T{h:02}:{mi:02}:{s:02}Z", days + 1)
     }
 }

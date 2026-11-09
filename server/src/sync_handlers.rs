@@ -1,17 +1,17 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     Json,
 };
 use base64::Engine;
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use uuid::Uuid;
 
 use crate::AppState;
-use crate::auth::AuthDevice;
+use crate::auth::{AuthDevice, require_subscribed};
 
 // ── Enrollment ────────────────────────────────────────────────────────────────
 
@@ -77,14 +77,18 @@ pub async fn push(
     State(state): State<AppState>,
     AuthDevice { device_id }: AuthDevice,
     Json(req): Json<PushRequest>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Err(e) = require_subscribed(&state, &device_id).await {
+        return e.into_response();
+    }
+
     let Some(payload_b64) = req.payload else {
-        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing required field: payload" })));
+        return (StatusCode::BAD_REQUEST, Json(json!({ "error": "missing required field: payload" }))).into_response();
     };
 
     let payload_bytes = match base64::engine::general_purpose::STANDARD.decode(&payload_b64) {
         Ok(b) => b,
-        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid payload" }))),
+        Err(_) => return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid payload" }))).into_response(),
     };
 
     let created_at = chrono_now();
@@ -94,16 +98,16 @@ pub async fn push(
     {
         Err(_) => {
             tracing::error!("spawn_blocking panicked on insert_blob");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })));
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response();
         }
         Ok(r) => r,
     };
 
     match result {
-        Ok(seq) => (StatusCode::OK, Json(json!({ "seq": seq }))),
+        Ok(seq) => (StatusCode::OK, Json(json!({ "seq": seq }))).into_response(),
         Err(e) => {
             tracing::error!("db error on insert_blob: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response()
         }
     }
 }
@@ -130,9 +134,13 @@ struct BlobEntry {
 // supporting multiple independent vault owners on the same server.
 pub async fn pull(
     State(state): State<AppState>,
-    AuthDevice { .. }: AuthDevice,
+    AuthDevice { device_id }: AuthDevice,
     axum::extract::Query(query): axum::extract::Query<PullQuery>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Err(e) = require_subscribed(&state, &device_id).await {
+        return e.into_response();
+    }
+
     let after = query.after.unwrap_or(0);
     let db = state.db.clone();
     let result = match tokio::task::spawn_blocking(move || db.pull_blobs(after))
@@ -140,7 +148,7 @@ pub async fn pull(
     {
         Err(_) => {
             tracing::error!("spawn_blocking panicked on pull_blobs");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })));
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response();
         }
         Ok(r) => r,
     };
@@ -156,11 +164,11 @@ pub async fn pull(
                     created_at: r.created_at,
                 })
                 .collect();
-            (StatusCode::OK, Json(json!({ "blobs": blobs })))
+            (StatusCode::OK, Json(json!({ "blobs": blobs }))).into_response()
         }
         Err(e) => {
             tracing::error!("db error on pull_blobs: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response()
         }
     }
 }
@@ -171,9 +179,13 @@ pub async fn revoke_device(
     State(state): State<AppState>,
     AuthDevice { device_id: auth_device_id }: AuthDevice,
     axum::extract::Path(path_device_id): axum::extract::Path<String>,
-) -> impl IntoResponse {
+) -> Response {
+    if let Err(e) = require_subscribed(&state, &auth_device_id).await {
+        return e.into_response();
+    }
+
     if auth_device_id != path_device_id {
-        return (StatusCode::FORBIDDEN, Json(json!({ "error": "device_id mismatch" })));
+        return (StatusCode::FORBIDDEN, Json(json!({ "error": "device_id mismatch" }))).into_response();
     }
 
     let db = state.db.clone();
@@ -183,17 +195,17 @@ pub async fn revoke_device(
     {
         Err(_) => {
             tracing::error!("spawn_blocking panicked on delete_device");
-            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })));
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response();
         }
         Ok(r) => r,
     };
 
     match result {
-        Ok(true) => (StatusCode::OK, Json(json!({}))),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))),
+        Ok(true) => (StatusCode::OK, Json(json!({}))).into_response(),
+        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "not found" }))).into_response(),
         Err(e) => {
             tracing::error!("db error on delete_device: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" }))).into_response()
         }
     }
 }
@@ -220,12 +232,12 @@ fn epoch_to_ymd_hms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     // Days since 1970-01-01
     let mut y = 1970u64;
     loop {
-        let dy = if is_leap(y) { 366 } else { 365 };
+        let dy = if crate::db::is_leap_year(y) { 366 } else { 365 };
         if days < dy { break; }
         days -= dy;
         y += 1;
     }
-    let leap = is_leap(y);
+    let leap = crate::db::is_leap_year(y);
     let months = [31u64, if leap { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
     let mut mo = 1u64;
     for dm in &months {
@@ -236,9 +248,6 @@ fn epoch_to_ymd_hms(secs: u64) -> (u64, u64, u64, u64, u64, u64) {
     (y, mo, days + 1, h, mi, s)
 }
 
-fn is_leap(y: u64) -> bool {
-    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
-}
 
 #[cfg(test)]
 mod tests {
@@ -248,6 +257,7 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::db::Db;
+    use serde_json::Value;
     use std::sync::Arc;
     use crate::plaid::PlaidClient;
 
@@ -264,6 +274,7 @@ mod tests {
                 "id".into(), "secret".into(), "sandbox",
             )),
             db,
+            admin_secret: "test-secret".into(),
         }
     }
 
@@ -372,6 +383,8 @@ mod tests {
         let state = test_state();
         let vk_hex = hex::encode(sk().verifying_key().to_bytes());
         state.db.get_or_create_device("auth-device", &vk_hex, "2024-01-01T00:00:00Z").unwrap();
+        // Grant an active subscription so push/pull/revoke tests pass the gate.
+        state.db.set_subscription("auth-device", "2099-01-01T00:00:00Z").unwrap();
         state
     }
 
@@ -600,5 +613,58 @@ mod tests {
             .unwrap();
         let resp = revoke_app(auth_state()).oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ── Subscription gate tests ───────────────────────────────────────────────
+
+    fn unsubscribed_auth_state() -> AppState {
+        // Enrolled but no subscription set.
+        let state = test_state();
+        let vk_hex = hex::encode(sk().verifying_key().to_bytes());
+        state.db.get_or_create_device("auth-device", &vk_hex, "2024-01-01T00:00:00Z").unwrap();
+        state
+    }
+
+    #[tokio::test]
+    async fn push_unsubscribed_returns_402() {
+        let state = unsubscribed_auth_state();
+        let ts = now_ts();
+        let resp = push_pull_app(state)
+            .oneshot(signed_push("aGVsbG8=", &ts))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn pull_unsubscribed_returns_402() {
+        let state = unsubscribed_auth_state();
+        let ts = now_ts();
+        let resp = push_pull_app(state)
+            .oneshot(signed_pull(None, &ts))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn revoke_unsubscribed_returns_402() {
+        let state = unsubscribed_auth_state();
+        let ts = now_ts();
+        let resp = revoke_app(state)
+            .oneshot(signed_delete("auth-device", &ts))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYMENT_REQUIRED);
+    }
+
+    #[tokio::test]
+    async fn enroll_no_subscription_required_returns_200() {
+        // Enrollment must succeed without a subscription - device needs an
+        // identity before subscription can be granted.
+        let state = test_state();
+        let body = format!(r#"{{"public_key": "{}"}}"#, valid_pubkey());
+        let (status, _) = post_json(app(state), "/sync/enroll", &body).await;
+        assert_eq!(status, StatusCode::OK);
     }
 }

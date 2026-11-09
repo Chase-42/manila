@@ -1,7 +1,7 @@
 use axum::{
     async_trait,
     extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
     Json,
 };
@@ -82,6 +82,22 @@ impl FromRequestParts<AppState> for AuthDevice {
     }
 }
 
+// Returns an error response when the device does not have an active subscription
+// (or is outside the 7-day grace period). Call this after AuthDevice resolves.
+pub async fn require_subscribed(state: &AppState, device_id: &str) -> Result<(), AuthError> {
+    let db = state.db.clone();
+    let did = device_id.to_owned();
+    let subscribed = tokio::task::spawn_blocking(move || db.is_subscribed(&did))
+        .await
+        .map_err(|_| AuthError(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?
+        .map_err(|_| AuthError(StatusCode::INTERNAL_SERVER_ERROR, "internal error"))?;
+    if subscribed {
+        Ok(())
+    } else {
+        Err(AuthError(StatusCode::PAYMENT_REQUIRED, "subscription required"))
+    }
+}
+
 fn header_str(parts: &Parts, name: &str) -> Option<String> {
     parts
         .headers
@@ -115,6 +131,7 @@ mod tests {
         AppState {
             plaid: Arc::new(PlaidClient::new("id".into(), "secret".into(), "sandbox")),
             db,
+            admin_secret: "test-secret".into(),
         }
     }
 

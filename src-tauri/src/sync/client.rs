@@ -100,9 +100,7 @@ pub struct PullResponse {
 #[derive(Deserialize)]
 pub struct PullBlob {
     pub seq: i64,
-    pub device_id: String,
     pub payload: String,
-    pub created_at: String,
 }
 
 pub async fn pull_blobs(
@@ -166,7 +164,7 @@ pub async fn revoke_device(
     Ok(())
 }
 
-async fn authenticated_request(
+pub(crate) async fn authenticated_request(
     http: &reqwest::Client,
     method: &str,
     url: &str,

@@ -1,8 +1,7 @@
 <script lang="ts">
   import * as Dialog from "$lib/components/ui/dialog";
-  import { Input } from "$lib/components/ui/input";
-  import { Label } from "$lib/components/ui/label";
   import { Button } from "$lib/components/ui/button";
+  import { invoke } from "@tauri-apps/api/core";
   import { listen } from "@tauri-apps/api/event";
   import { upsertPlaidConnection } from "$lib/plaid";
   import {
@@ -19,12 +18,11 @@
     onsuccess: () => void;
   } = $props();
 
-  type Step = "setup" | "linking" | "exchanging" | "error";
+  type Step = "linking" | "exchanging" | "error";
 
-  let step = $state<Step>("setup");
+  let step = $state<Step>("linking");
   let error = $state<string | null>(null);
-  let urlError = $state<string | null>(null);
-  let proxyUrl = $state("");
+  let subscriptionRequired = $state(false);
   let linkToken = $state<string | null>(null);
 
   function getOrCreateClientId(): string {
@@ -35,62 +33,20 @@
     return id;
   }
 
-  function validateUrl(url: string): string | null {
-    if (!url.trim()) return "Proxy URL is required.";
-    if (!url.startsWith("http://") && !url.startsWith("https://")) {
-      return "Proxy URL must start with http:// or https://";
-    }
-    return null;
-  }
-
   function errorMsg(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
   }
 
-  async function fetchLinkToken(
-    base: string,
-    clientUserId: string,
-  ): Promise<string> {
-    const res = await fetch(`${base}/plaid/link-token`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_user_id: clientUserId,
-        redirect_uri: "manila://plaid-oauth",
-      }),
-    });
-    const data = (await res.json()) as { link_token?: string; error?: string };
-    if (!res.ok || !data.link_token) {
-      throw new Error(data.error ?? `Proxy returned ${res.status}`);
-    }
-    return data.link_token;
-  }
-
-  async function exchangeToken(
-    base: string,
-    publicToken: string,
-  ): Promise<{ accessToken: string; itemId: string }> {
-    const res = await fetch(`${base}/plaid/exchange`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ public_token: publicToken }),
-    });
-    const data = (await res.json()) as {
-      access_token: string;
-      item_id: string;
-      error?: string;
-    };
-    if (!res.ok) throw new Error(data.error ?? `Exchange failed: ${res.status}`);
-    return { accessToken: data.access_token, itemId: data.item_id };
+  function isSubscriptionError(msg: string): boolean {
+    return msg.toLowerCase().includes("subscription required");
   }
 
   $effect(() => {
     if (!open) return;
-    step = "setup";
+    step = "linking";
     error = null;
-    urlError = null;
+    subscriptionRequired = false;
     linkToken = null;
-    proxyUrl = localStorage.getItem("manila.plaidProxyUrl") ?? "";
 
     let unlisten: (() => void) | undefined;
     let cancelled = false;
@@ -111,29 +67,28 @@
       }
     });
 
+    startLink();
+
     return () => {
       cancelled = true;
       unlisten?.();
     };
   });
 
-  async function handleConnect() {
-    urlError = validateUrl(proxyUrl);
-    if (urlError) return;
-
-    const base = proxyUrl.trim();
-    localStorage.setItem("manila.plaidProxyUrl", base);
-    step = "linking";
-    error = null;
-
+  async function startLink() {
     try {
-      const token = await fetchLinkToken(base, getOrCreateClientId());
+      const token = await invoke<string>("get_plaid_link_token", {
+        clientUserId: getOrCreateClientId(),
+        redirectUri: "manila://plaid-oauth",
+      });
       linkToken = token;
       await loadPlaidScript();
       openPlaidLink(token, null);
     } catch (e) {
+      const msg = errorMsg(e);
       step = "error";
-      error = errorMsg(e);
+      error = msg;
+      subscriptionRequired = isSubscriptionError(msg);
     }
   }
 
@@ -153,17 +108,23 @@
   ) {
     step = "exchanging";
     try {
-      const { accessToken, itemId } = await exchangeToken(
-        proxyUrl.trim(),
-        publicToken,
+      const result = await invoke<{ access_token: string; item_id: string }>(
+        "exchange_plaid_token",
+        { publicToken },
       );
-      const params = extractConnectionParams(accessToken, itemId, metadata);
+      const params = extractConnectionParams(
+        result.access_token,
+        result.item_id,
+        metadata,
+      );
       await upsertPlaidConnection(params);
       open = false;
       onsuccess();
     } catch (e) {
+      const msg = errorMsg(e);
       step = "error";
-      error = errorMsg(e);
+      error = msg;
+      subscriptionRequired = isSubscriptionError(msg);
     }
   }
 
@@ -174,14 +135,18 @@
     if (err) {
       step = "error";
       error = err.error_message;
+      subscriptionRequired = false;
     } else {
-      step = "setup";
+      open = false;
     }
   }
 
-  function reset() {
-    step = "setup";
+  function retry() {
+    step = "linking";
     error = null;
+    subscriptionRequired = false;
+    linkToken = null;
+    startLink();
   }
 </script>
 
@@ -191,47 +156,32 @@
       <Dialog.Title>Connect a bank</Dialog.Title>
     </Dialog.Header>
 
-    {#if step === "setup"}
-      <form
-        class="form"
-        onsubmit={(e) => {
-          e.preventDefault();
-          handleConnect();
-        }}
-      >
-        <div class="field">
-          <Label for="proxy-url">Proxy server URL</Label>
-          <Input
-            id="proxy-url"
-            bind:value={proxyUrl}
-            placeholder="https://your-proxy.onrender.com"
-          />
-          {#if urlError}
-            <p class="field-error">{urlError}</p>
-          {/if}
-        </div>
-
-        <Dialog.Footer>
-          <Button type="button" variant="ghost" onclick={() => (open = false)}>
-            Cancel
-          </Button>
-          <Button type="submit">Connect</Button>
-        </Dialog.Footer>
-      </form>
-    {:else if step === "linking" || step === "exchanging"}
+    {#if step === "linking" || step === "exchanging"}
       <div class="status">
         <p class="status-msg">
           {step === "linking" ? "Opening Plaid Link…" : "Saving connection…"}
         </p>
       </div>
     {:else if step === "error"}
-      <div class="form">
-        <p class="error">{error}</p>
+      <div class="error-section">
+        {#if subscriptionRequired}
+          <div class="sub-callout">
+            <p class="sub-title">Subscription required</p>
+            <p class="sub-body">
+              Bank connections require an active subscription. Contact support to
+              activate your account.
+            </p>
+          </div>
+        {:else}
+          <p class="error">{error}</p>
+        {/if}
         <Dialog.Footer>
           <Button type="button" variant="ghost" onclick={() => (open = false)}>
-            Cancel
+            Close
           </Button>
-          <Button onclick={reset}>Try again</Button>
+          {#if !subscriptionRequired}
+            <Button onclick={retry}>Try again</Button>
+          {/if}
         </Dialog.Footer>
       </div>
     {/if}
@@ -239,23 +189,11 @@
 </Dialog.Root>
 
 <style>
-  .form {
+  .error-section {
     display: flex;
     flex-direction: column;
     gap: 16px;
     margin-top: 4px;
-  }
-
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .field-error {
-    font-size: 11px;
-    color: var(--destructive);
-    margin: 0;
   }
 
   .error {
@@ -263,6 +201,29 @@
     color: var(--destructive);
     margin: 0;
     font-family: var(--font-mono);
+  }
+
+  .sub-callout {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .sub-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--foreground);
+  }
+
+  .sub-body {
+    font-size: 12px;
+    color: var(--muted-foreground);
+    margin: 0;
+    line-height: 1.5;
   }
 
   .status {

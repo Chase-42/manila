@@ -270,17 +270,17 @@ mod tests {
     }
 
     #[test]
-    fn sync_skip_flag_is_zero_even_on_error() {
+    fn sync_skip_flag_is_zero_after_apply_of_unknown_table() {
         let mut conn = setup();
         let key = [0u8; 32];
-        // Apply a change to an unknown table — should return Err but skip guard clears flag.
+        // apply_bundle returns Ok(0) for unrecognized tables (they are silently skipped).
+        // The drop guard resets the flag to 0 regardless of return value.
         let bad_bundle = make_bundle(vec![BundleChange {
             table: "nonexistent_table".to_string(),
             op: "upsert".to_string(),
             row_json: Some(serde_json::json!({"id": "1"})),
             row_id: None,
         }]);
-        // This should not panic; apply just skips unrecognized tables.
         apply_bundle(&mut conn, &bad_bundle, &key).unwrap();
 
         let flag: i64 = conn

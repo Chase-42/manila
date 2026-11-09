@@ -44,7 +44,7 @@ pub fn build_push_bundle(
     conn: &Connection,
     device_id: &str,
     push_counter: i64,
-) -> Result<Option<Vec<u8>>, String> {
+) -> Result<Option<(Vec<u8>, usize)>, String> {
     let mut stmt = conn
         .prepare(
             "SELECT id, table_name, row_id, operation
@@ -188,8 +188,9 @@ pub fn build_push_bundle(
         changes,
     };
 
+    let count = bundle.changes.len();
     let json = serde_json::to_vec(&bundle).map_err(|e| e.to_string())?;
-    Ok(Some(json))
+    Ok(Some((json, count)))
 }
 
 pub fn decode_bundle(data_key: &[u8; 32], payload_b64: &str) -> Result<SyncBundle, String> {
@@ -232,7 +233,7 @@ mod tests {
         let conn = setup();
         insert_account(&conn, "acc-1");
 
-        let bytes = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
+        let (bytes, _) = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
         let bundle: SyncBundle = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(bundle.changes.len(), 1);
         assert_eq!(bundle.changes[0].op, "upsert");
@@ -248,7 +249,7 @@ mod tests {
         conn.execute("UPDATE accounts SET name = 'Updated' WHERE id = 'acc-1'", [])
             .unwrap();
 
-        let bytes = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
+        let (bytes, _) = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
         let bundle: SyncBundle = serde_json::from_slice(&bytes).unwrap();
         // accounts trigger fires, plus seeded categories etc. — filter to accounts only
         let acc_changes: Vec<_> = bundle
@@ -267,7 +268,7 @@ mod tests {
         conn.execute("DELETE FROM accounts WHERE id = 'acc-1'", [])
             .unwrap();
 
-        let bytes = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
+        let (bytes, _) = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
         let bundle: SyncBundle = serde_json::from_slice(&bytes).unwrap();
         let acc_changes: Vec<_> = bundle
             .changes
@@ -295,7 +296,7 @@ mod tests {
         )
         .unwrap();
 
-        let bytes = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
+        let (bytes, _) = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
         let bundle: SyncBundle = serde_json::from_slice(&bytes).unwrap();
         let tm: Vec<_> = bundle
             .changes
@@ -315,7 +316,7 @@ mod tests {
             .unwrap();
 
         // After upsert+delete, the dedup produces a 'delete' op, not an upsert.
-        let bytes = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
+        let (bytes, _) = build_push_bundle(&conn, "dev-1", 0).unwrap().unwrap();
         let bundle: SyncBundle = serde_json::from_slice(&bytes).unwrap();
         let acc_upserts: Vec<_> = bundle
             .changes

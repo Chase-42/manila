@@ -195,7 +195,17 @@
       <p class="success">{syncResult}</p>
     {/if}
     {#if syncError}
-      <p class="error">{syncError}</p>
+      {#if syncError.toLowerCase().includes("subscription required")}
+        <div class="sub-callout">
+          <p class="sub-title">Subscription required</p>
+          <p class="sub-body">
+            Sync requires an active subscription. Contact support to activate
+            your account.
+          </p>
+        </div>
+      {:else}
+        <p class="error">{syncError}</p>
+      {/if}
     {/if}
     <p class="status-line">
       {#if lastRun}
@@ -368,7 +378,8 @@
     margin-bottom: 6px;
   }
 
-  input[type="text"] {
+  input[type="text"],
+  input[type="password"] {
     width: 100%;
     padding: 8px 10px;
     background: var(--input);
@@ -379,7 +390,8 @@
     box-sizing: border-box;
   }
 
-  input[type="text"]:focus {
+  input[type="text"]:focus,
+  input[type="password"]:focus {
     outline: none;
     border-color: var(--ring);
   }
@@ -414,6 +426,30 @@
     color: var(--success, #22c55e);
     font-size: 12px;
     margin: 6px 0 0;
+  }
+
+  .sub-callout {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin: 6px 0 0;
+  }
+
+  .sub-title {
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0;
+    color: var(--foreground);
+  }
+
+  .sub-body {
+    font-size: 11px;
+    color: var(--muted-foreground);
+    margin: 0;
+    line-height: 1.5;
   }
 
   .status-line {

@@ -3,6 +3,7 @@
   import { invoke } from "@tauri-apps/api/core";
   import { vaultStatus } from "$lib/stores/vault";
   import { validatePassword } from "$lib/lockscreen";
+  import { markOnboardingPending } from "$lib/util/onboarding";
   import { generateWordChallenges, type Challenge } from "$lib/phraseChallenge";
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
@@ -106,6 +107,7 @@
     submitting = true;
     try {
       await invoke("acknowledge_recovery_phrase");
+      markOnboardingPending();
       onUnlocked();
     } catch {
       error = "Failed to complete setup. Please restart the app.";

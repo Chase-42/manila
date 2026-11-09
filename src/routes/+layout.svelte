@@ -6,7 +6,9 @@
   import { Home, LayoutDashboard, ArrowLeftRight, Wallet, Tag, Target, BarChart2, Settings } from '@lucide/svelte';
   import type { Component } from 'svelte';
   import LockScreen from "$lib/components/LockScreen.svelte";
+  import OnboardingWizard from "$lib/components/OnboardingWizard.svelte";
   import { lockVault, vaultStatus, refreshVaultStatus } from "$lib/stores/vault";
+  import { isOnboardingPending, clearOnboardingPending } from "$lib/util/onboarding";
   import { listPlaidConnections, syncPlaidConnection } from "$lib/plaid";
   import { getSyncConfig, runSync } from "$lib/sync";
 
@@ -15,6 +17,7 @@
   let dbError = $state<string | null>(null);
   let dbReady = $state(false);
   let prevUnlocked = $state(false);
+  let showOnboarding = $state(false);
 
   async function syncPlaidConnections(proxyUrl: string) {
     const connections = await listPlaidConnections().catch(() => []);
@@ -30,6 +33,15 @@
     if (cfg?.server_url) runSync().catch(() => {});
   }
 
+  function onVaultUnlocked() {
+    prevUnlocked = true;
+    if (isOnboardingPending()) {
+      showOnboarding = true;
+    } else {
+      void triggerBackgroundSync();
+    }
+  }
+
   $effect(() => {
     if (!$vaultStatus) return;
     if (!$vaultStatus.unlocked) {
@@ -37,9 +49,14 @@
       return;
     }
     if (prevUnlocked) return;
-    prevUnlocked = true;
-    void triggerBackgroundSync();
+    onVaultUnlocked();
   });
+
+  function handleOnboardingDone() {
+    clearOnboardingPending();
+    showOnboarding = false;
+    void triggerBackgroundSync();
+  }
 
   onMount(async () => {
     // wdio/tauri-plugin must be registered in the WebView for E2E tests; DEV guard keeps it out of prod
@@ -108,6 +125,8 @@
   {#if dbReady}
     <LockScreen onUnlocked={refreshVaultStatus} />
   {/if}
+{:else if showOnboarding}
+  <OnboardingWizard onDone={handleOnboardingDone} />
 {:else}
   <div class="shell">
     <nav class="sidebar">

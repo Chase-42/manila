@@ -55,10 +55,24 @@ pub async fn enroll(
         .map_err(|_| ())
         .and_then(|r| r.map_err(|_| ()))
     {
-        Ok((device_id, enrolled_at)) => (
-            StatusCode::OK,
-            Json(json!({ "device_id": device_id, "enrolled_at": enrolled_at })),
-        ),
+        Ok((device_id, enrolled_at)) => {
+            let db2 = state.db.clone();
+            let did = device_id.clone();
+            match tokio::task::spawn_blocking(move || db2.set_subscription(&did, "2099-01-01T00:00:00Z"))
+                .await
+                .map_err(|_| ())
+                .and_then(|r| r.map_err(|_| ()))
+            {
+                Ok(_) => (
+                    StatusCode::OK,
+                    Json(json!({ "device_id": device_id, "enrolled_at": enrolled_at })),
+                ),
+                Err(()) => {
+                    tracing::error!("db error on set_subscription for device {}", device_id);
+                    (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
+                }
+            }
+        }
         Err(()) => {
             tracing::error!("db error on get_or_create_device");
             (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": "internal error" })))
@@ -666,5 +680,15 @@ mod tests {
         let body = format!(r#"{{"public_key": "{}"}}"#, valid_pubkey());
         let (status, _) = post_json(app(state), "/sync/enroll", &body).await;
         assert_eq!(status, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn enroll_auto_grants_subscription() {
+        let state = test_state();
+        let body = format!(r#"{{"public_key": "{}"}}"#, valid_pubkey());
+        let (status, json) = post_json(app(state.clone()), "/sync/enroll", &body).await;
+        assert_eq!(status, StatusCode::OK);
+        let device_id = json["device_id"].as_str().unwrap();
+        assert!(state.db.is_subscribed(device_id).unwrap());
     }
 }

@@ -166,10 +166,9 @@
       <div class="error-section">
         {#if subscriptionRequired}
           <div class="sub-callout">
-            <p class="sub-title">Subscription required</p>
+            <p class="sub-title">Server error</p>
             <p class="sub-body">
-              Bank connections require an active subscription. Contact support to
-              activate your account.
+              Unable to reach Manila's server. Check your connection and try again.
             </p>
           </div>
         {:else}
@@ -179,9 +178,7 @@
           <Button type="button" variant="ghost" onclick={() => (open = false)}>
             Close
           </Button>
-          {#if !subscriptionRequired}
-            <Button onclick={retry}>Try again</Button>
-          {/if}
+          <Button onclick={retry}>Try again</Button>
         </Dialog.Footer>
       </div>
     {/if}

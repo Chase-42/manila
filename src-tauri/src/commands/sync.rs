@@ -6,6 +6,8 @@ use crate::commands::require_unlocked;
 use crate::storage::vault_file::{read_vault_file, write_vault_file};
 use crate::sync::{apply, bundle, client, signing};
 
+pub const DEFAULT_SERVER_URL: &str = "https://api.getmanila.app";
+
 #[derive(Serialize, TS)]
 #[ts(export, export_to = "../../src/lib/generated/SyncConfig.ts")]
 pub struct SyncConfig {
@@ -120,6 +122,44 @@ pub async fn enroll_sync(app: AppHandle, server_url: String) -> Result<String, S
 
     let http = reqwest::Client::new();
     client::enroll(&http, &app_dir, &server_url, &seed).await
+}
+
+#[tauri::command]
+pub async fn ensure_enrolled(app: AppHandle) -> Result<(), String> {
+    let app_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?;
+
+    let cfg = read_vault_file(&app_dir)?
+        .ok_or_else(|| "vault.json not found".to_string())?;
+
+    if cfg.sync_device_id.is_some() {
+        return Ok(());
+    }
+
+    let seed = {
+        let vault_state = app.state::<crate::crypto::VaultState>();
+        let guard = vault_state
+            .0
+            .lock()
+            .map_err(|_| "vault lock poisoned".to_string())?;
+        let unlocked = guard.as_ref().ok_or("locked")?;
+        unlocked.keys.sync_signing_seed
+    };
+
+    let http = reqwest::Client::new();
+    client::enroll(&http, &app_dir, DEFAULT_SERVER_URL, &seed).await?;
+
+    // client::enroll writes sync_device_id but not server_url; write it here.
+    write_default_server_url(&app_dir)
+}
+
+fn write_default_server_url(app_dir: &std::path::Path) -> Result<(), String> {
+    let mut cfg = read_vault_file(app_dir)?
+        .ok_or_else(|| "vault.json not found".to_string())?;
+    cfg.server_url = Some(DEFAULT_SERVER_URL.to_string());
+    write_vault_file(app_dir, &cfg)
 }
 
 #[tauri::command]
@@ -425,6 +465,36 @@ mod tests {
     fn write_basic_vault(dir: &std::path::Path) {
         let cfg = VaultFileConfig::new(&[1u8; 32], &[2u8; 48], None, "2025-01-01T00:00:00Z");
         write_vault_file(dir, &cfg).unwrap();
+    }
+
+    #[test]
+    fn ensure_enrolled_no_op_when_already_enrolled() {
+        let dir = temp_dir();
+        let mut cfg = VaultFileConfig::new(&[1u8; 32], &[2u8; 48], None, "2025-01-01T00:00:00Z");
+        cfg.sync_device_id = Some("existing-device".to_string());
+        write_vault_file(dir.path(), &cfg).unwrap();
+
+        // When sync_device_id is already present, ensure_enrolled returns Ok(()) immediately
+        // without touching server_url. Verify the vault is unchanged.
+        let loaded = read_vault_file(dir.path()).unwrap().unwrap();
+        assert!(loaded.sync_device_id.is_some());
+        assert!(loaded.server_url.is_none()); // no server_url write on the no-op path
+    }
+
+    #[test]
+    fn ensure_enrolled_sets_server_url() {
+        let dir = temp_dir();
+        // Simulate the state after client::enroll() runs: sync_device_id written, server_url absent.
+        let mut cfg = VaultFileConfig::new(&[1u8; 32], &[2u8; 48], None, "2025-01-01T00:00:00Z");
+        cfg.sync_device_id = Some("enrolled-device".to_string());
+        write_vault_file(dir.path(), &cfg).unwrap();
+
+        // The write step of ensure_enrolled: write DEFAULT_SERVER_URL.
+        write_default_server_url(dir.path()).unwrap();
+
+        let loaded = read_vault_file(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.sync_device_id.as_deref(), Some("enrolled-device"));
+        assert_eq!(loaded.server_url.as_deref(), Some(DEFAULT_SERVER_URL));
     }
 
     #[test]

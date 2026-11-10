@@ -1,51 +1,35 @@
 <script lang="ts">
-  import { enrollSync } from "$lib/sync";
+  import { ensureEnrolled } from "$lib/sync";
   import PlaidLinkDialog from "$lib/components/PlaidLinkDialog.svelte";
   import { Button } from "$lib/components/ui/button";
-  import { Input } from "$lib/components/ui/input";
 
   let { onDone }: { onDone: () => void } = $props();
 
-  type Phase = "sync" | "bank" | "done";
+  type Phase = "bank" | "done";
 
-  let phase = $state<Phase>("sync");
-  let syncUrl = $state(localStorage.getItem("manila.plaidProxyUrl") ?? "");
-  let syncWorking = $state(false);
-  let syncError = $state<string | null>(null);
-  let syncConfigured = $state(false);
+  let phase = $state<Phase>("bank");
+  let enrolling = $state(false);
+  let enrollError = $state<string | null>(null);
 
   let plaidOpen = $state(false);
   let plaidConnected = $state(false);
 
-  function validateUrl(url: string): string | null {
-    if (!url.trim()) return "Server URL is required.";
-    if (!url.startsWith("http://") && !url.startsWith("https://"))
-      return "URL must start with http:// or https://";
-    return null;
-  }
-
-  async function handleConnect() {
-    syncError = null;
-    const err = validateUrl(syncUrl);
-    if (err) {
-      syncError = err;
-      return;
+  $effect(() => {
+    if (phase === "bank") {
+      runEnsureEnrolled();
     }
-    syncWorking = true;
+  });
+
+  async function runEnsureEnrolled() {
+    enrolling = true;
+    enrollError = null;
     try {
-      await enrollSync(syncUrl.trim());
-      localStorage.setItem("manila.plaidProxyUrl", syncUrl.trim());
-      syncConfigured = true;
-      phase = "bank";
+      await ensureEnrolled();
     } catch (e) {
-      syncError = e instanceof Error ? e.message : String(e);
+      enrollError = e instanceof Error ? e.message : String(e);
     } finally {
-      syncWorking = false;
+      enrolling = false;
     }
-  }
-
-  function skipSync() {
-    phase = "done";
   }
 
   function handlePlaidSuccess() {
@@ -64,60 +48,45 @@
   <div class="onboarding-card" class:wide={phase !== "done"}>
     <div class="wordmark">manila</div>
 
-    {#if phase === "sync"}
-      <h1 class="step-heading">Set up sync</h1>
-      <p class="step-body">
-        Connect to a Manila sync server to enable multi-device access to your vault.
-      </p>
-      <div class="step-form">
-        <Input
-          type="url"
-          placeholder="https://your-server.example.com"
-          bind:value={syncUrl}
-          disabled={syncWorking}
-          autocomplete="off"
-        />
-        {#if syncError}
-          <p class="field-error">{syncError}</p>
-        {/if}
-        <Button
-          onclick={handleConnect}
-          disabled={syncWorking}
-          size="lg"
-          class="action-btn"
-        >
-          {syncWorking ? "Connecting…" : "Connect & enroll"}
-        </Button>
-        <button class="skip-link" onclick={skipSync} disabled={syncWorking}>
-          Skip for now
-        </button>
-      </div>
-    {:else if phase === "bank"}
+    {#if phase === "bank"}
       <h1 class="step-heading">Connect a bank account</h1>
       <p class="step-body">
         Link your bank for automatic transaction import via Plaid.
       </p>
+      <p class="step-body transparency">
+        Bank sync uses Manila's secure server. Your financial data is never stored there.
+      </p>
       <div class="step-form">
-        <Button
-          onclick={() => (plaidOpen = true)}
-          size="lg"
-          class="action-btn"
-        >
-          Connect a bank
-        </Button>
-        <button class="skip-link" onclick={skipBank}>
-          Skip for now
-        </button>
+        {#if enrolling}
+          <p class="status-msg">Connecting to Manila's server…</p>
+          <Button size="lg" class="action-btn" disabled={true}>
+            Connect a bank
+          </Button>
+        {:else if enrollError}
+          <p class="field-error">{enrollError}</p>
+          <Button onclick={runEnsureEnrolled} size="lg" class="action-btn">
+            Try again
+          </Button>
+        {:else}
+          <Button
+            onclick={() => (plaidOpen = true)}
+            size="lg"
+            class="action-btn"
+          >
+            Connect a bank
+          </Button>
+          <button class="skip-link" onclick={skipBank}>
+            Skip for now
+          </button>
+        {/if}
       </div>
     {:else}
       <h1 class="step-heading">You're all set!</h1>
       <p class="step-body">
-        {#if syncConfigured && plaidConnected}
-          Sync and bank connection are configured.
-        {:else if syncConfigured}
-          Sync is configured. Add bank connections any time from Accounts.
+        {#if plaidConnected}
+          Bank connection is configured.
         {:else}
-          Set up sync and bank connections any time from Settings and Accounts.
+          Add bank connections any time from Accounts.
         {/if}
       </p>
       <Button onclick={onDone} size="lg" class="action-btn">
@@ -175,6 +144,11 @@
     max-width: 340px;
   }
 
+  .step-body.transparency {
+    font-size: 11px;
+    opacity: 0.7;
+  }
+
   .step-form {
     display: flex;
     flex-direction: column;
@@ -185,6 +159,13 @@
   .field-error {
     font-size: 12px;
     color: var(--destructive);
+    margin: 0;
+    text-align: center;
+  }
+
+  .status-msg {
+    font-size: 13px;
+    color: var(--muted-foreground);
     margin: 0;
     text-align: center;
   }
@@ -201,11 +182,6 @@
 
   .skip-link:hover {
     color: var(--foreground);
-  }
-
-  .skip-link:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 
   :global(.action-btn) {

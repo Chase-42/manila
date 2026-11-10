@@ -19,6 +19,14 @@ export async function getSyncConfig(): Promise<SyncConfig> {
   }
 }
 
+export async function ensureEnrolled(): Promise<void> {
+  try {
+    await invoke("ensure_enrolled");
+  } catch (e) {
+    throw e instanceof Error ? e : new Error(String(e));
+  }
+}
+
 export async function enrollSync(serverUrl: string): Promise<string> {
   try {
     return await invoke<string>("enroll_sync", { serverUrl });

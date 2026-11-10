@@ -111,6 +111,7 @@ pub fn run() {
             commands::sync::configure_sync,
             commands::sync::get_sync_config,
             commands::sync::enroll_sync,
+            commands::sync::ensure_enrolled,
             commands::sync::run_sync,
             commands::sync::get_sync_status,
             commands::sync::revoke_sync,

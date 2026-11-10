@@ -4,7 +4,6 @@
   import { vaultStatus } from "$lib/stores/vault";
   import { validatePassword } from "$lib/lockscreen";
   import { markOnboardingPending } from "$lib/util/onboarding";
-  import { generateWordChallenges, type Challenge } from "$lib/phraseChallenge";
   import { Input } from "$lib/components/ui/input";
   import { Button } from "$lib/components/ui/button";
 
@@ -13,7 +12,6 @@
   type SetupPhase =
     | "password_entry"
     | "show_phrase"
-    | "verify_phrase"
     | "restore_phrase"
     | "enroll_phrase";
 
@@ -39,8 +37,7 @@
   let enrollConfirmPassword = $state("");
 
   let phraseWords = $state<string[]>([]);
-  let challenges = $state<Challenge[]>([]);
-  let answers = $state<Record<number, string>>({});
+  let copySuccess = $state(false);
 
   const isInitializing = $derived($vaultStatus?.initialized === false);
   const failureMessage = $derived(
@@ -50,6 +47,19 @@
   const biometricEnabled = $derived(
     !isInitializing && ($vaultStatus?.biometric_enabled ?? false),
   );
+
+  async function handleSaveAndContinue() {
+    submitting = true;
+    try {
+      await invoke("acknowledge_recovery_phrase");
+      markOnboardingPending();
+      onUnlocked();
+    } catch {
+      error = "Failed to complete setup. Please restart the app.";
+    } finally {
+      submitting = false;
+    }
+  }
 
   async function handleBiometricUnlock() {
     biometricSubmitting = true;
@@ -65,16 +75,9 @@
     }
   }
 
-  const allChallengesCorrect = $derived(
-    challenges.length === 3 &&
-      challenges.every((c) => answers[c.position] === c.correctWord),
-  );
-
   async function beginPhraseCeremony() {
     const words = await invoke<string[]>("generate_recovery_phrase");
     phraseWords = words;
-    challenges = generateWordChallenges(words);
-    answers = {};
     setupPhase = "show_phrase";
   }
 
@@ -97,27 +100,6 @@
     } finally {
       submitting = false;
     }
-  }
-
-  async function handleAcknowledge() {
-    setupPhase = "verify_phrase";
-  }
-
-  async function handleVerifyComplete() {
-    submitting = true;
-    try {
-      await invoke("acknowledge_recovery_phrase");
-      markOnboardingPending();
-      onUnlocked();
-    } catch {
-      error = "Failed to complete setup. Please restart the app.";
-    } finally {
-      submitting = false;
-    }
-  }
-
-  function selectAnswer(position: number, word: string) {
-    answers = { ...answers, [position]: word };
   }
 
   async function handleRestoreSubmit(e: Event) {
@@ -365,54 +347,48 @@
 {#snippet showPhraseContent()}
   <h1 class="mode-label">Back up your recovery phrase</h1>
   <p class="phrase-instructions">
-    Write down these 24 words in order. They are the only way to recover your vault if you forget your master password.
+    Copy or download these 24 words. They are the only way to recover your vault if you forget your master password.
   </p>
-  <div class="phrase-grid">
-    {#each phraseWords as word, i (i)}
-      <div class="phrase-word">
-        <span class="word-num">{i + 1}</span>
-        <span class="word-text">{word}</span>
-      </div>
-    {/each}
-  </div>
-  <Button onclick={handleAcknowledge} size="lg" class="proceed-btn">
-    I've written these down
-  </Button>
-{/snippet}
-
-{#snippet verifyPhraseContent()}
-  <h1 class="mode-label">Verify your recovery phrase</h1>
-  <p class="phrase-instructions">Select the correct word for each position.</p>
-  <div class="challenges">
-    {#each challenges as challenge (challenge.position)}
-      <div class="challenge">
-        <p class="challenge-label">Word #{challenge.position}</p>
-        <div class="challenge-options">
-          {#each challenge.options as option (option)}
-            <button
-              class="option-btn"
-              class:selected={answers[challenge.position] === option}
-              class:correct={answers[challenge.position] === option && option === challenge.correctWord}
-              class:wrong={answers[challenge.position] === option && option !== challenge.correctWord}
-              onclick={() => selectAnswer(challenge.position, option)}
-            >
-              {option}
-            </button>
-          {/each}
-        </div>
-      </div>
-    {/each}
+  <textarea
+    class="phrase-textarea phrase-display"
+    readonly
+    spellcheck={false}
+    value={phraseWords.join(" ")}
+    rows={4}
+  ></textarea>
+  <div class="phrase-actions">
+    <Button
+      variant="outline"
+      size="sm"
+      onclick={async () => {
+        await navigator.clipboard.writeText(phraseWords.join(" "));
+        copySuccess = true;
+        setTimeout(() => (copySuccess = false), 2000);
+      }}
+    >
+      {copySuccess ? "Copied!" : "Copy"}
+    </Button>
+    <Button
+      variant="outline"
+      size="sm"
+      onclick={() => {
+        const blob = new Blob([phraseWords.join(" ")], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "manila-recovery-phrase.txt";
+        a.click();
+        URL.revokeObjectURL(url);
+      }}
+    >
+      Download
+    </Button>
   </div>
   {#if error}
     <p class="error">{error}</p>
   {/if}
-  <Button
-    onclick={handleVerifyComplete}
-    size="lg"
-    class="proceed-btn"
-    disabled={!allChallengesCorrect || submitting}
-  >
-    Continue
+  <Button onclick={handleSaveAndContinue} size="lg" class="proceed-btn" disabled={submitting}>
+    I've saved my recovery phrase
   </Button>
 {/snippet}
 
@@ -428,8 +404,6 @@
       {@render enrollPhraseContent()}
     {:else if setupPhase === "show_phrase"}
       {@render showPhraseContent()}
-    {:else if setupPhase === "verify_phrase"}
-      {@render verifyPhraseContent()}
     {/if}
   </div>
 </div>
@@ -499,104 +473,15 @@
     max-width: 440px;
   }
 
-  .phrase-grid {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
+  .phrase-display {
+    user-select: text;
+    cursor: text;
+  }
+
+  .phrase-actions {
+    display: flex;
     gap: 8px;
     width: 100%;
-    background: var(--card);
-    border: 1px solid var(--border);
-    padding: 16px;
-  }
-
-  .phrase-word {
-    display: flex;
-    align-items: baseline;
-    gap: 6px;
-    padding: 6px 8px;
-    background: var(--background);
-    border: 1px solid var(--border);
-  }
-
-  .word-num {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    color: var(--muted-foreground);
-    min-width: 16px;
-    text-align: right;
-    user-select: none;
-  }
-
-  .word-text {
-    font-family: var(--font-mono);
-    font-size: 13px;
-    color: var(--foreground);
-    font-weight: 500;
-  }
-
-  .challenges {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
-    width: 100%;
-  }
-
-  .challenge {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-  }
-
-  .challenge-label {
-    font-family: var(--font-display);
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--muted-foreground);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    margin: 0;
-  }
-
-  .challenge-options {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 8px;
-  }
-
-  .option-btn {
-    padding: 10px 12px;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 500;
-    background: var(--card);
-    border: 1px solid var(--border);
-    color: var(--foreground);
-    cursor: pointer;
-    text-align: center;
-    transition: border-color 0.1s, background 0.1s;
-  }
-
-  .option-btn:hover {
-    border-color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 8%, transparent);
-  }
-
-  .option-btn.selected {
-    border-color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 12%, transparent);
-    color: var(--primary);
-  }
-
-  .option-btn.correct {
-    border-color: var(--primary);
-    background: color-mix(in srgb, var(--primary) 16%, transparent);
-    color: var(--primary);
-  }
-
-  .option-btn.wrong {
-    border-color: var(--destructive);
-    background: color-mix(in srgb, var(--destructive) 12%, transparent);
-    color: var(--destructive);
   }
 
   :global(.proceed-btn) {

@@ -5,6 +5,10 @@ services:
     dockerfilePath: server/Dockerfile
     dockerContext: server
     healthCheckPath: /health
+    disk:
+      name: manila-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: PLAID_CLIENT_ID
         sync: false
@@ -18,3 +22,7 @@ services:
       - key: PORT
         sync: false
         value: "3000"
+      - key: ADMIN_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        value: /data/manila-sync.db
